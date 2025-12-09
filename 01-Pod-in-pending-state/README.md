@@ -1,6 +1,3 @@
-Below is your complete **GitHub-ready README.md**, professionally formatted and cleanly structured.
-You can **copy/paste directly into your repository** — all Markdown formatting will render perfectly on GitHub.
-
 ---
 
 # 🧪 Kubernetes Troubleshooting Lab
