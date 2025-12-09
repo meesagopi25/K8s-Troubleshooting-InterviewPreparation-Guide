@@ -538,12 +538,3 @@ This guide provides hands-on examples and troubleshooting practice for all major
 Use this as a **training and interview preparation reference** to master practical Kubernetes debugging.
 
 ---
-
-If you'd like, I can also generate:
-
-✅ A downloadable PDF version
-✅ A shorter interview-only cheat sheet
-✅ A GitHub “About” + tagline + badges
-
-Just tell me!
-
