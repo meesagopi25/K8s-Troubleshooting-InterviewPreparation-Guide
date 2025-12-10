@@ -59,7 +59,15 @@ kubectl describe node <node>
 
 ### ❌ Problem
 
-Pod requests more CPU than allowed in the namespace quota.
+Please review your quota setup for your namespace first, and then adjust the values accordingly in the below examples.
+I've provided the below example based on quota setup for my namespace in te OpenShift sandbox environment.
+bash-5.1 ~ $ oc get quota -n mg1982-dev
+NAME             REQUEST                                                                                              LIMIT                                                                        AGE
+compute-build    requests.cpu: 0/3, requests.memory: 0/14Gi, requests.nvidia.com/gpu: 0/0                             limits.cpu: 0/20, limits.memory: 0/14Gi, limits.nvidia.com/gpu: 0/0          22d
+compute-deploy   requests.cpu: 200m/3, requests.memory: 256Mi/30Gi, requests.nvidia.com/gpu: 0/0                      limits.cpu: 800m/30, limits.memory: 640Mi/30Gi, limits.nvidia.com/gpu: 0/0   22d
+storage          count/persistentvolumeclaims: 4/10, requests.ephemeral-storage: 0/15Gi, requests.storage: 4Gi/80Gi   limits.ephemeral-storage: 0/15Gi                                             22d
+ 
+Pod requests more CPU than allowed in the namespace quota. 
 
 ### YAML
 
