@@ -254,6 +254,152 @@ resources:
 
 ---
 
+Below are **full, ready-to-run Kubernetes examples** for demonstrating the **OOMKilled (Out of Memory)** scenario—both the **failing Pod** and the **fixed Pod**.
+These are perfect for training, demos, and interview preparation.
+
+---
+
+# 🔥 **Scenario 3 — Pod OOMKilled (Out of Memory)**
+
+A pod is OOMKilled when the **container uses more memory than its limit**, so the kernel terminates it.
+
+---
+
+# ❌ **Failing Example — Pod Crashes With OOMKilled**
+
+This pod requests/limits only **100Mi**, but the container allocates far more memory intentionally, causing a crash.
+
+### `oom-fail.yaml`
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-fail
+spec:
+  containers:
+  - name: memory-hog
+    image: busybox
+    command: ["sh", "-c"]
+
+    # Allocate lots of memory intentionally — simulate memory leak
+    args:
+      - |
+        echo "Allocating large memory...";
+        dd if=/dev/zero of=/dev/null bs=1M count=500;
+
+    resources:
+      limits:
+        memory: "100Mi"   # ❌ Too small → OOMKilled
+```
+
+### 🧪 What Happens
+
+Apply:
+
+```bash
+kubectl apply -f oom-fail.yaml
+```
+
+Check status:
+
+```bash
+kubectl get pod oom-fail
+```
+
+Output:
+
+```
+oom-fail   CrashLoopBackOff
+```
+
+Now describe:
+
+```bash
+kubectl describe pod oom-fail
+```
+
+You will see:
+
+```
+Last State:  Terminated
+Reason:      OOMKilled
+```
+
+---
+
+# ✔️ **Working Example — Memory Limit Increased**
+
+Now we increase the memory **limit** so the process can run successfully.
+
+### `oom-fix.yaml`
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-fix
+spec:
+  containers:
+  - name: memory-hog
+    image: busybox
+    command: ["sh", "-c"]
+
+    # Same memory-intensive operation
+    args:
+      - |
+        echo "Allocating large memory...";
+        dd if=/dev/zero of=/dev/null bs=1M count=500;
+
+    resources:
+      limits:
+        memory: "512Mi"   # ✅ Enough memory — pod RUNS successfully
+```
+
+### 🧪 Apply and test:
+
+```bash
+kubectl apply -f oom-fix.yaml
+```
+
+Check:
+
+```bash
+kubectl get pod oom-fix
+```
+
+Expected:
+
+```
+oom-fix   Running
+```
+
+---
+
+# 📊 Side-by-Side Summary
+
+| Behavior          | ❌ OOMKilled Pod                           | ✅ Fixed Pod                 |
+| ----------------- | ----------------------------------------- | --------------------------- |
+| Memory Limit      | 100Mi                                     | 512Mi                       |
+| Actual Memory Use | ~500Mi                                    | ~500Mi                      |
+| Outcome           | Kernel kills container → CrashLoopBackOff | Container runs successfully |
+| Describe output   | Reason: OOMKilled                         | No OOMKilled                |
+
+---
+
+# 🧠 Why OOMKilled Happens
+
+Kubernetes enforces **hard memory limits**:
+
+* If app uses **more than limit memory** → container is killed
+* Restart policy triggers → CrashLoopBackOff
+
+It **does NOT** matter what the *request* is — memory **limit** is final.
+
+---
+
+
+
 # 4️⃣ ImagePullBackOff Misunderstood as CrashLoopBackOff
 
 If image is wrong:
