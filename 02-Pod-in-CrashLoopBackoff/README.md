@@ -118,6 +118,110 @@ Provide correct config or fix the command.
 
 ---
 
+Below is a **clean, professional, GitHub-ready Markdown section** showing a **side-by-side comparison** of a *failing* vs *working* Nginx Pod in Kubernetes.
+
+Perfect for adding to your troubleshooting README.md.
+
+---
+
+# 🔥 Nginx Pod Failing vs Working — Side-by-Side Examples
+
+These two examples demonstrate how a Pod can enter **CrashLoopBackOff** due to a **wrong command or missing configuration**, and how a corrected version works normally.
+
+---
+
+# ❌ **Failing Example — Nginx Crashes (Wrong Config / Missing SSL Certs)**
+
+This Pod references a **nonexistent config file**, causing Nginx to fail at startup.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-failing
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+
+    # Wrong command: uses a custom config file that does NOT exist
+    command: ["nginx"]
+    args:
+      - "-g"
+      - "daemon off;"
+      - "-c"
+      - "/etc/nginx/invalid.conf"     # ❌ file does NOT exist
+```
+
+### 🔍 Expected Error
+
+```text
+nginx: [emerg] open() "/etc/nginx/invalid.conf" failed (No such file or directory)
+Back-off restarting failed container
+```
+
+Pod enters:
+
+```
+CrashLoopBackOff
+```
+
+---
+
+# ✅ **Working Example — Nginx Starts Successfully**
+
+Here, we simply use the **default Nginx configuration**, which always works unless overridden.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-working
+spec:
+  containers:
+  - name: nginx
+    image: nginx:latest
+
+    # Correct command to start nginx in the foreground
+    command: ["nginx", "-g", "daemon off;"]
+
+    ports:
+    - containerPort: 80
+```
+
+### ✔ Expected Behavior
+
+* Pod enters **Running**
+* No restarts
+* Nginx uses default config (`/etc/nginx/nginx.conf`)
+
+---
+
+# 📊 **Side-by-Side Comparison Table**
+
+| Behavior    | ❌ Failing Pod                      | ✅ Working Pod             |
+| ----------- | ---------------------------------- | ------------------------- |
+| Command     | `nginx -c /etc/nginx/invalid.conf` | `nginx -g 'daemon off;'`  |
+| Config used | References missing file            | Uses valid default config |
+| Startup     | Crashes immediately                | Starts correctly          |
+| Logs        | “cannot open … invalid.conf”       | Normal Nginx startup      |
+| Pod Status  | CrashLoopBackOff                   | Running                   |
+| Restarts    | Keeps restarting                   | No restarts               |
+
+---
+
+# 🧠 Why This Matters
+
+This pair of examples teaches key Kubernetes interview concepts:
+
+* How a wrong command leads to CrashLoopBackOff
+* How container entrypoints work
+* How to debug using logs & describe
+* Understanding of daemon mode (`daemon off;`)
+* How to use default configs when testing
+
+---
+
 # 3️⃣ OOMKilled (Out of Memory)
 
 ### Problem
