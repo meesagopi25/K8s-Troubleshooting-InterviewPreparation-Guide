@@ -60,7 +60,7 @@ kubectl describe node <node>
 ### ❌ Problem
 
 Please review your quota setup for your namespace first, and then adjust the values accordingly in the below examples.
-I've provided the below example based on quota setup for my namespace in te OpenShift sandbox environment.
+I've provided below examples based on quota setup for my namespace in the OpenShift sandbox environment.
 
 
 | **Name**           | **Requests**                                                                      | **Limits**                                                     | **Age** |
