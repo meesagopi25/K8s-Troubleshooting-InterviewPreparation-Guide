@@ -813,7 +813,190 @@ If `/health` isn't ready → container killed repeatedly.
 * Fix endpoint
 * Use readiness probe appropriately
 
+
 ---
+
+# Combined `startupProbe`, `readinessProbe`, and `livenessProbe` Examples
+
+### (Best-Practice Kubernetes Probing Strategy)
+
+Kubernetes supports **three types of health probes**, each designed for a different phase of a container’s lifecycle:
+
+| Probe              | Purpose                                      | What Happens on Failure                                             |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------- |
+| **startupProbe**   | Detects when app has finished starting       | If failing → Kubelet **does not run** readiness/liveness probes yet |
+| **readinessProbe** | Detects when app is ready to receive traffic | Pod is **removed from Service endpoints** (NOT restarted)           |
+| **livenessProbe**  | Detects whether app is still alive           | Failing → Kubelet **kills and restarts** the container              |
+
+Using all three together is the recommended **production-grade pattern**.
+
+---
+
+# 🧪 Scenario: A Slow-Starting App with a Health Endpoint
+
+* App needs **40 seconds** to start
+* App becomes ready only after startup completes
+* App must remain alive throughout execution
+
+We will demonstrate:
+
+* `startupProbe` prevents early failure
+* `readinessProbe` ensures the pod receives traffic only when ready
+* `livenessProbe` monitors ongoing health
+
+---
+
+# ✅ **Full Working Example With All Three Probes**
+
+**File: `probes-combined.yaml`**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-app-probes
+spec:
+  containers:
+  - name: webapp
+    image: python:3.10-slim
+    command: ["sh", "-c"]
+    args:
+      - |
+        echo "Starting app... (sleep 40)";
+        sleep 40;
+        echo "App started";
+        python3 -m http.server 8080
+
+    ports:
+    - containerPort: 8080
+
+    # 🟡 1. STARTUP PROBE — for slow startup apps
+    startupProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      failureThreshold: 20     # Allow 20 failures (20 × 2s = 40 seconds)
+      periodSeconds: 2         # Probe every 2 seconds
+
+    # 🟢 2. READINESS PROBE — when should pod receive traffic?
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3
+
+    # 🔴 3. LIVENESS PROBE — kill/restart if app becomes unhealthy after startup
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 60   # Start only after app is fully running
+      periodSeconds: 10
+      failureThreshold: 3
+```
+
+---
+
+# 🧠 How This Probe Combination Works
+
+## 🟡 **1. startupProbe (slow startup)**
+
+* Kubernetes **ONLY runs `startupProbe`** in the beginning.
+* If startupProbe fails → **container is NOT restarted**
+* Kubernetes waits until startupProbe succeeds once
+* Once successful → readiness & liveness probes become active
+
+This prevents premature restarts for slow-booting apps.
+
+---
+
+## 🟢 **2. readinessProbe (is app ready to serve traffic?)**
+
+After startupProbe succeeds:
+
+* readinessProbe runs every 5s
+* If it fails → pod is **removed from Service load balancers**, but NOT restarted
+* Perfect for warm-up periods, migrations, cache warming, etc.
+
+---
+
+## 🔴 **3. livenessProbe (is app still alive?)**
+
+Begins **after 60 seconds**, giving time for:
+
+* slow startup
+* readiness to stabilize
+
+If the livenessProbe fails:
+
+* Kubernetes **kills the container**
+* Pod restarts
+* CrashLoopBackOff if failure continues
+
+This ensures long-running health monitoring.
+
+---
+
+# 📊 Probe Timing Diagram
+
+```
+Time → 0s ----------------------------->
+
+startupProbe:  [oooo FAIL oooo FAIL oooo ... until app starts]  → SUCCESS
+readinessProbe:             [ WAIT ] → [ PASS / FAIL toggles based on readiness ]
+livenessProbe:                                 [ active health checks ]
+```
+
+Legend:
+`oooo FAIL` = startupProbe checking during slow start
+
+---
+
+# 🧪 How to Test
+
+```bash
+kubectl apply -f probes-combined.yaml
+kubectl describe pod web-app-probes
+kubectl logs -f web-app-probes
+```
+
+You should see:
+
+```
+Starting app... (sleep 40)
+App started
+```
+
+Watch probe transitions:
+
+```bash
+kubectl get pod web-app-probes -w
+```
+
+---
+
+# 🎯 Best Practices (Put This in README)
+
+* Always use **startupProbe** for apps that take >10s to start
+* Only use **livenessProbe** for apps that must be restarted when unhealthy
+* readinessProbe should represent "ready for traffic"
+* Avoid aggressive probe timings (causes false positives)
+* Never use same probe for readiness & liveness (anti-pattern)
+
+---
+
+# 📝 Summary Table
+
+| Feature        | startupProbe            | readinessProbe                 | livenessProbe                |
+| -------------- | ----------------------- | ------------------------------ | ---------------------------- |
+| Purpose        | Wait for app startup    | Decide if pod receives traffic | Restart crashed or stuck app |
+| Failure impact | Keeps container running | Removes pod from endpoints     | Kills container              |
+| When used      | Only during startup     | After startup                  | After readiness OK           |
+
+---
+
 
 # 🔟 Volume Mount / PVC Issues
 
