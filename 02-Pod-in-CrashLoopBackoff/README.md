@@ -507,6 +507,180 @@ This knowledge is essential for Kubernetes interviews and real-world troubleshoo
 
 ---
 
+One more OOMKilled example with Python application.
+Below is a **ready-to-paste Markdown section** for your README that shows **two Python examples** — one that **will not** trigger OOM (a streaming example) and one that **will** reliably trigger OOM (a real user-space allocation). Each example includes the full Pod YAML, exact commands to run, expected behaviour, and a detailed explanation so readers understand *why* one fails and the other succeeds.
+
+Copy / paste this into your README.md.
+
+---
+
+## 🐍 Python OOM Examples — Working vs Not Working
+
+This section demonstrates the difference between **streaming I/O** (does not consume large resident user memory) and **real user-space allocation** (consumes memory and triggers `OOMKilled` when the container limit is exceeded).
+
+> **Rule of thumb:** to trigger an OOM the process must allocate memory in user-space and *hold* it. Streaming data to `stdout`/`/dev/null` or using kernel pipe buffers often does **not** consume large user memory and therefore will **not** OOM.
+
+---
+
+### ❌ Example (Not OOM - streaming, will exit normally → CrashLoopBackOff but **not** OOMKilled)
+
+**File: `python-nonoom.yaml`**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: python-streaming
+spec:
+  restartPolicy: Always
+  containers:
+  - name: streamer
+    image: python:3.10-slim
+    command: ["python3", "-u", "-c"]
+    args:
+      - |
+        import sys, time
+        print("Streaming data in small chunks (does NOT allocate large user memory)")
+        # Stream 500 times a 1Mi chunk to stdout (stdout typically goes to container logs or /dev/null),
+        # each chunk is created and then garbage-collected, so it does not accumulate into large resident memory.
+        for i in range(500):
+            sys.stdout.write("0" * 1024 * 1024)  # 1Mi chunk
+            sys.stdout.flush()
+            time.sleep(0.01)
+        print("Done streaming")
+        time.sleep(10)
+    resources:
+      limits:
+        memory: "128Mi"
+      requests:
+        memory: "64Mi"
+```
+
+**Commands:**
+
+```bash
+kubectl apply -f python-nonoom.yaml
+kubectl get pod python-streaming
+kubectl logs -f python-streaming
+kubectl describe pod python-streaming
+```
+
+**Expected behaviour & explanation:**
+
+* The container **streams** 500 × 1Mi chunks to stdout, but each chunk is allocated and quickly freed (not retained in memory). Most of the heavy lifting is I/O, not persistent allocation.
+* The process typically **completes the loop** and exits with code `0` (or finishes after `time.sleep`), so Kubernetes restarts it (if `restartPolicy` is `Always`) and you may see `CrashLoopBackOff` if it exits repeatedly — **but the reason will not be `OOMKilled`**.
+* `kubectl describe pod` will show `Last State: Terminated` with `Exit Code: 0` (or similar) rather than `Reason: OOMKilled`.
+* This demonstrates why **streaming** is not a good way to reproduce OOMs.
+
+---
+
+### ✅ Example (Working OOM — real user-space allocation that will be OOMKilled)
+
+**File: `python-oom.yaml`**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: python-oom
+spec:
+  restartPolicy: Always
+  containers:
+  - name: hog
+    image: python:3.10-slim
+    command: ["python3", "-u", "-c"]
+    args:
+      - |
+        import time, sys
+        print("Allocating a large Python string to exhaust memory...")
+        # Allocate ~700 MiB in a single object and keep it referenced to force real memory usage.
+        x = "A" * (700 * 1024 * 1024)
+        print("Allocated, sleeping to allow observation")
+        sys.stdout.flush()
+        time.sleep(60)
+    resources:
+      limits:
+        memory: "512Mi"   # limit smaller than allocation → will trigger OOM
+      requests:
+        memory: "512Mi"
+```
+
+**Commands:**
+
+```bash
+kubectl apply -f python-oom.yaml
+sleep 2
+kubectl get pod python-oom
+kubectl describe pod python-oom
+kubectl logs python-oom
+```
+
+**Expected behaviour & explanation:**
+
+* The Python code creates a single large string `x` of ~700 MiB and **holds** it in a variable. This is **real user-space memory** inside the Python process.
+* Because `resources.limits.memory` is set to `512Mi`, the container will try to use more RAM than allowed. The kernel OOM killer will kill the process.
+* `kubectl describe pod python-oom` will show something like:
+
+```
+Last State:    Terminated
+  Reason:      OOMKilled
+  Exit Code:   137
+```
+
+* Exit code `137` indicates the process received `SIGKILL` (128 + 9), which is typical for an OOM kill.
+* After the OOM kill, Kubernetes restarts the container (restart policy `Always`) and you will see `CrashLoopBackOff` if it keeps being killed.
+
+---
+
+## 🔎 How to interpret results (commands to inspect)
+
+* `kubectl get pods` — shows `CrashLoopBackOff` status column.
+* `kubectl describe pod <pod>` — look under **Containers** for `Last State` / `Reason` (expect `OOMKilled`) and **Events** for messages.
+* `kubectl logs <pod>` — you may see the print statements before the kill.
+* `kubectl top pod <pod>` (if metrics-server installed) — to observe memory usage while the container runs.
+
+---
+
+## ⚠️ Notes & Caveats
+
+* **Streaming vs allocation:** Writing large amounts to stdout or piping `/dev/zero` to `/dev/null` usually does **not** cause persistent user-space memory usage. Kernel buffers/pipes and process I/O do not behave like allocating a large Python object, so they typically do not trigger OOM.
+* **Garbage collection:** Python may free temporary buffers; the guaranteed way to hold memory is to keep a reference (e.g., assign to a variable) — as in the working example.
+* **Allocation size:** Choose an allocation comfortably larger than the limit (700Mi vs 512Mi) — keep headroom for interpreter overhead.
+* **Memory overhead:** Python interpreter uses additional memory beyond your string; the limit must accommodate the allocation plus interpreter overhead.
+* **Exit code 137:** Indicates `SIGKILL` (OOM), displayed as `Exit Code: 137` in `kubectl describe pod`.
+* **Cluster differences:** On some clusters, other processes or node-level oom behavior could affect results. These examples are reliable on Minikube, KIND, OpenShift Local and typical cloud clusters.
+
+---
+
+## ✅ Suggested README snippet (copy/paste)
+
+````markdown
+### Python OOM examples (streaming vs real allocation)
+
+**Non-OOM (streaming)** `python-nonoom.yaml` — streams 500×1Mi chunks to stdout; this is I/O and does *not* persistently allocate memory, so it will not cause OOMKilled (may exit normally).
+
+**OOM (real allocation)** `python-oom.yaml` — allocates a ~700MiB Python string and holds it; with a `memory: "512Mi"` limit this reliably triggers OOMKilled (Exit Code 137) and CrashLoopBackOff.
+
+Apply and inspect:
+
+```bash
+kubectl apply -f python-oom.yaml
+kubectl describe pod python-oom
+kubectl logs python-oom
+```
+
+Look for `Reason: OOMKilled` and `Exit Code: 137`.
+````
+
+---
+
+If you want, I can also:
+
+* Add these two YAML files to a downloadable ZIP for your repo.
+* Add a small shell script that automates apply + watch + describe for demo.
+* Produce a short flowchart for README explaining how to decide if a crash was OOMKilled or not.
+
+
 # 4️⃣ ImagePullBackOff Misunderstood as CrashLoopBackOff
 
 If image is wrong:
