@@ -59,6 +59,8 @@ kubectl describe node <node>
 
 ### ❌ Problem
 Pod requests more CPU than allowed in the namespace quota. 
+
+
 Please review your quota setup for your namespace first, and then adjust the values accordingly in the below examples.
 I've provided below examples based on quota setup for my namespace in the OpenShift sandbox environment.
 
