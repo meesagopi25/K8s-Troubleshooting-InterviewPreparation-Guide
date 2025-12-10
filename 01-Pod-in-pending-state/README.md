@@ -58,10 +58,9 @@ kubectl describe node <node>
 # 1️⃣ Insufficient CPU
 
 ### ❌ Problem
-
+Pod requests more CPU than allowed in the namespace quota. 
 Please review your quota setup for your namespace first, and then adjust the values accordingly in the below examples.
 I've provided below examples based on quota setup for my namespace in the OpenShift sandbox environment.
-
 
 | **Name**           | **Requests**                                                                      | **Limits**                                                     | **Age** |
 | ------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------- |
@@ -69,9 +68,6 @@ I've provided below examples based on quota setup for my namespace in the OpenSh
 | **compute-deploy** | cpu: **200m / 3** • memory: **256Mi / 30Gi** • gpu: **0 / 0**                     | cpu: **800m / 30** • memory: **640Mi / 30Gi** • gpu: **0 / 0** | 22d     |
 | **storage**        | PVC count: **4 / 10** • ephemeral-storage: **0 / 15Gi** • storage: **4Gi / 80Gi** | ephemeral-storage: **0 / 15Gi**                                | 22d     |
 
-
- 
-Pod requests more CPU than allowed in the namespace quota. 
 
 ### YAML
 
