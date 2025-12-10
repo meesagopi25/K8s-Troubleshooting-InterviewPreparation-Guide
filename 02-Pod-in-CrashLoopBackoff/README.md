@@ -1,3 +1,6 @@
+Below is the **Markdown-formatted README.md section** for **CrashLoopBackOff Troubleshooting**.
+You can **copy/paste directly into your GitHub README** — all formatting is GitHub-ready.
+
 ---
 
 # 🚨 Pod Keeps Restarting (CrashLoopBackOff) — Troubleshooting Guide
@@ -345,4 +348,5 @@ kubectl get pods -o wide
 | Init container fails     | Main container won't start      | Fix init logic              |
 
 ---
+
 
