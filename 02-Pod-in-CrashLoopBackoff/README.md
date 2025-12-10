@@ -259,15 +259,81 @@ These are perfect for training, demos, and interview preparation.
 
 ---
 
-# 🔥 **Scenario 3 — Pod OOMKilled (Out of Memory)**
-
-A pod is OOMKilled when the **container uses more memory than its limit**, so the kernel terminates it.
+Below is a **complete, polished, GitHub-ready OOMKilled Troubleshooting Lab** section for your README.
+You can copy/paste it **exactly as-is** into your documentation.
 
 ---
 
-# ❌ **Failing Example — Pod Crashes With OOMKilled**
+# 🔥 OOMKilled Troubleshooting Lab
 
-This pod requests/limits only **100Mi**, but the container allocates far more memory intentionally, causing a crash.
+### **Understanding Out-of-Memory Kills in Kubernetes**
+
+A container is marked **OOMKilled** when it tries to use more memory than its assigned **memory limit**.
+This is one of the most common causes of **CrashLoopBackOff** and a frequent **interview question**.
+
+This lab demonstrates:
+
+* How to reproduce OOMKilled
+* How to detect it
+* How to fix it
+* Why some pods restart without OOMKilled
+* Differences between I/O spikes vs real memory allocation
+
+---
+
+# 📘 Table of Contents (OOMKilled Lab)
+
+1. What is OOMKilled?
+2. How Kubernetes Enforces Memory Limits
+3. Failing Pod Example (OOMKilled)
+4. Working Pod Example (Fixed)
+5. Why some Pods “CrashLoopBackOff” **without** OOMKilled
+6. Commands for Debugging OOMKilled
+7. Side-by-Side Comparison Table
+
+---
+
+# 1️⃣ What Does OOMKilled Mean?
+
+A pod is **OOMKilled** when:
+
+* It exceeds its **memory limit**, and
+* The Linux kernel OOM killer terminates it
+
+This results in:
+
+```
+Last State: Terminated
+Reason:     OOMKilled
+Exit Code:  137
+```
+
+Kubernetes then restarts the container → **CrashLoopBackOff**.
+
+---
+
+# 2️⃣ How Kubernetes Enforces Memory Limits
+
+Memory **limits** define the *maximum* RAM the container can use.
+
+Example:
+
+```yaml
+resources:
+  limits:
+    memory: "100Mi"
+```
+
+If the process tries to use more than 100Mi → **OOMKilled**.
+
+Memory **requests** do NOT affect OOMKill.
+Only **limits** matter.
+
+---
+
+# 3️⃣ ❌ Failing Pod Example — Forced OOMKilled
+
+This example reliably allocates **600Mi of real memory**, exceeding the limit of **512Mi**.
 
 ### `oom-fail.yaml`
 
@@ -281,56 +347,41 @@ spec:
   - name: memory-hog
     image: busybox
     command: ["sh", "-c"]
-
-    # Allocate lots of memory intentionally — simulate memory leak
     args:
       - |
-        echo "Allocating large memory...";
-        dd if=/dev/zero of=/dev/null bs=1M count=500;
-
+        echo "Allocating memory...";
+        head -c 600M /dev/zero > /dev/null;  # allocate 600Mi in buffers
+        sleep 10;
     resources:
       limits:
-        memory: "100Mi"   # ❌ Too small → OOMKilled
+        memory: "512Mi"    # ❌ too small → causes OOMKilled
 ```
 
-### 🧪 What Happens
-
-Apply:
-
-```bash
-kubectl apply -f oom-fail.yaml
-```
-
-Check status:
-
-```bash
-kubectl get pod oom-fail
-```
-
-Output:
-
-```
-oom-fail   CrashLoopBackOff
-```
-
-Now describe:
+### Expected:
 
 ```bash
 kubectl describe pod oom-fail
 ```
 
-You will see:
+Output:
 
 ```
-Last State:  Terminated
-Reason:      OOMKilled
+Last State: Terminated
+Reason:     OOMKilled
+Exit Code: 137
+```
+
+Pod goes into:
+
+```
+CrashLoopBackOff
 ```
 
 ---
 
-# ✔️ **Working Example — Memory Limit Increased**
+# 4️⃣ ✔️ Working Pod Example — Fixed Memory Limit
 
-Now we increase the memory **limit** so the process can run successfully.
+Increase the limit so the pod can run successfully.
 
 ### `oom-fix.yaml`
 
@@ -344,61 +395,122 @@ spec:
   - name: memory-hog
     image: busybox
     command: ["sh", "-c"]
-
-    # Same memory-intensive operation
     args:
       - |
-        echo "Allocating large memory...";
-        dd if=/dev/zero of=/dev/null bs=1M count=500;
-
+        echo "Allocating memory...";
+        head -c 600M /dev/zero > /dev/null;
+        sleep 10;
     resources:
       limits:
-        memory: "512Mi"   # ✅ Enough memory — pod RUNS successfully
+        memory: "1Gi"     # ✅ Enough memory to run safely
 ```
 
-### 🧪 Apply and test:
+### Expected:
+
+```
+STATUS: Running
+No OOMKilled events
+```
+
+---
+
+# 5️⃣ ❗ Why Your Pod Sometimes Shows CrashLoopBackOff but NOT OOMKilled
+
+Commands like:
 
 ```bash
-kubectl apply -f oom-fix.yaml
+dd if=/dev/zero of=/dev/null bs=1M count=500
 ```
 
-Check:
+**do NOT allocate memory**.
+They stream data between file descriptors (I/O), not into RAM.
+
+Result:
+
+* Process exits **successfully** (Exit Code 0)
+* Container exits immediately
+* Kubernetes restarts it
+* Pod enters **CrashLoopBackOff**
+* But **NO OOMKilled event appears**
+
+This confuses many beginners and is a **common interview trick question**.
+
+---
+
+# 6️⃣ 🧰 Commands for Debugging OOMKilled
+
+### Check pod details
 
 ```bash
-kubectl get pod oom-fix
+kubectl describe pod <pod>
 ```
 
-Expected:
+Look for:
 
 ```
-oom-fix   Running
+Reason: OOMKilled
+Exit Code: 137
 ```
 
 ---
 
-# 📊 Side-by-Side Summary
+### Check restart count
 
-| Behavior          | ❌ OOMKilled Pod                           | ✅ Fixed Pod                 |
-| ----------------- | ----------------------------------------- | --------------------------- |
-| Memory Limit      | 100Mi                                     | 512Mi                       |
-| Actual Memory Use | ~500Mi                                    | ~500Mi                      |
-| Outcome           | Kernel kills container → CrashLoopBackOff | Container runs successfully |
-| Describe output   | Reason: OOMKilled                         | No OOMKilled                |
+```bash
+kubectl get pods -o wide
+```
 
 ---
 
-# 🧠 Why OOMKilled Happens
+### Stream logs
 
-Kubernetes enforces **hard memory limits**:
-
-* If app uses **more than limit memory** → container is killed
-* Restart policy triggers → CrashLoopBackOff
-
-It **does NOT** matter what the *request* is — memory **limit** is final.
+```bash
+kubectl logs -f <pod>
+```
 
 ---
 
+### Check node memory pressure
 
+```bash
+kubectl describe node <node> | grep -i memory
+```
+
+---
+
+### Check live memory usage (needs metrics-server)
+
+```bash
+kubectl top pod
+kubectl top node
+```
+
+---
+
+# 7️⃣ 📊 Side-by-Side Comparison Table
+
+| Scenario                   | Behavior                             | Expected Result                      |
+| -------------------------- | ------------------------------------ | ------------------------------------ |
+| ❌ Memory limit too small   | App allocates more memory than limit | OOMKilled → CrashLoopBackOff         |
+| ❌ App exits normally       | App completes instantly              | CrashLoopBackOff (without OOMKilled) |
+| ✔ Correct memory limit     | App uses memory within limit         | Pod runs normally                    |
+| ✔ No memory-intensive work | No memory spike                      | Pod runs normally                    |
+
+---
+
+# 🎉 Summary
+
+This OOMKilled lab teaches you:
+
+* How to **reproduce OOMKilled** reliably
+* How to differentiate between I/O vs real memory allocation
+* How to inspect **Last State**, **Exit Code 137**, and **Reason: OOMKilled**
+* How to fix the issue by adjusting limits
+* Common misconceptions about CrashLoopBackOff
+
+This knowledge is essential for Kubernetes interviews and real-world troubleshooting.
+
+---
 
 # 4️⃣ ImagePullBackOff Misunderstood as CrashLoopBackOff
 
