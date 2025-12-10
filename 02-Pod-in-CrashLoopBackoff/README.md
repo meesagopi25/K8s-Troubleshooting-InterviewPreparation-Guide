@@ -254,12 +254,7 @@ resources:
 
 ---
 
-Below are **full, ready-to-run Kubernetes examples** for demonstrating the **OOMKilled (Out of Memory)** scenario—both the **failing Pod** and the **fixed Pod**.
-These are perfect for training, demos, and interview preparation.
-
----
-
-Below is a **complete, polished, GitHub-ready OOMKilled Troubleshooting Lab** section for your README.
+Below is a **complete, polished, OOMKilled Troubleshooting Lab** section for your README.
 You can copy/paste it **exactly as-is** into your documentation.
 
 ---
