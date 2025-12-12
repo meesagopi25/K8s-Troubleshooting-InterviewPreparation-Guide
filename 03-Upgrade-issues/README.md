@@ -243,10 +243,273 @@ If readiness never succeeds → rollout freezes → protects production.
 
 ---
 
-If you want:
+Absolutely — here is a **clean, complete, practical, step-by-step guide** to perform and test a **Zero-Downtime Deployment** in Kubernetes.
+This is the *exact* version you should add to your README.
 
-* A failing liveness probe example
-* A canary rollout where v2 fails
-* A diagram that shows the flow of a failed rolling update
+Everything below *works on any Kubernetes cluster*: Minikube, KIND, OpenShift, or cloud.
+
+---
+
+# ✅ **Zero-Downtime Deployment – Full Practical Lab**
+
+This lab demonstrates:
+
+* Rolling updates with **zero downtime**
+* Readiness-driven traffic switching
+* How Kubernetes prevents bad deployments
+* How to test service continuity during an upgrade
+
+---
+
+# 🧱 **1. Create Deployment v1 (initial stable version)**
+
+Save as **web-v1.yaml**:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zero-web
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0      # Ensure no downtime (at least 2 pods always running)
+      maxSurge: 1            # Add 1 extra pod temporarily during rollout
+  selector:
+    matchLabels:
+      app: zero-web
+  template:
+    metadata:
+      labels:
+        app: zero-web
+        version: v1
+    spec:
+      containers:
+      - name: app
+        image: nginx
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 2
+          periodSeconds: 3
+```
+
+Apply:
+
+```bash
+kubectl apply -f web-v1.yaml
+kubectl rollout status deploy/zero-web
+```
+
+Service (save as svc.yaml):
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: zero-web-svc
+spec:
+  selector:
+    app: zero-web
+  ports:
+  - port: 80
+    targetPort: 80
+```
+
+Apply:
+
+```bash
+kubectl apply -f svc.yaml
+```
+
+---
+
+# 🧪 **2. Start a continuous traffic test (to verify zero downtime)**
+
+Run a test pod:
+
+```bash
+kubectl run tester --rm -it --image=busybox -n default -- sh
+```
+
+Inside the shell:
+
+```sh
+while true; do wget -qO- http://zero-web-svc; echo ""; sleep 1; done
+```
+
+You should see:
+
+```
+<!DOCTYPE html> <html> ... Welcome to nginx! ...
+```
+
+Every second.
+
+Keep this **running during the rollout**.
+
+---
+
+# 🚀 **3. Deploy Version v2 (upgrade without downtime)**
+
+Let's upgrade nginx → Apache httpd (or you can modify HTML).
+Save as **web-v2.yaml**:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zero-web
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: zero-web
+  template:
+    metadata:
+      labels:
+        app: zero-web
+        version: v2
+    spec:
+      containers:
+      - name: app
+        image: httpd:2.4
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 2
+          periodSeconds: 3
+```
+
+Apply:
+
+```bash
+kubectl apply -f web-v2.yaml
+kubectl rollout status deploy/zero-web
+```
+
+### ✔ Expected:
+
+* Tester loop NEVER stops printing output.
+* Traffic seamlessly shifts to v2.
+* No errors, no downtime.
+
+---
+
+# 📌 **4. Verify Pods During Rollout**
+
+```bash
+kubectl get pods -o wide -w
+```
+
+You will see:
+
+1. New v2 pod created → becomes Ready
+2. Old v1 pod terminated
+3. Repeat for 2nd pod
+
+Zero downtime is guaranteed because:
+
+* `maxUnavailable=0` keeps old pods serving until new pods are fully ready.
+* Readiness probe ensures traffic only goes to healthy pods.
+
+---
+
+# ❌ **5. (Optional) Test a Broken Update — Rollout Fail Example**
+
+Use a broken readinessProbe:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /healthz   # <-- WRONG PATH
+    port: 80
+```
+
+Apply:
+
+```bash
+kubectl apply -f web-v3-broken.yaml
+kubectl rollout status deploy/zero-web
+```
+
+### Expected:
+
+* New pods stay `0/1 Ready`
+* Existing pods continue serving
+* Rollout hangs → **no downtime**
+* Eventually you see:
+
+```
+deployment "zero-web" exceeded its progress deadline
+```
+
+This shows **Kubernetes protects production** with zero downtime.
+
+---
+
+# 🔧 **6. Fix the rollout and resume**
+
+Fix the readinessProbe path:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /
+    port: 80
+```
+
+Apply again:
+
+```bash
+kubectl apply -f web-v3-fixed.yaml
+kubectl rollout status deploy/zero-web
+```
+
+Traffic continues uninterrupted.
+
+---
+
+# 🎉 **Summary – What You Achieved**
+
+You have now tested:
+
+### ✔ Zero-downtime rolling updates
+
+### ✔ Readiness gates
+
+### ✔ How Kubernetes waits before switching traffic
+
+### ✔ Surge/Unavailable strategy behavior
+
+### ✔ Rollback protection
+
+### ✔ Continuous traffic testing
+
+### ✔ Handling a broken release safely
+
+This is exactly how real production-grade deployments are validated.
+
+---
+
+# Want to go deeper?
+
+I can provide:
+
+* Blue/Green deployment example
+* Canary deployment example
+* Weighted traffic split example
+* A rollback demo
+* A full README documentation section
 
 Just tell me!
+
