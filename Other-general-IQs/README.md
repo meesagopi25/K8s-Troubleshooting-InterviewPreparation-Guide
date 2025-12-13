@@ -1,11 +1,78 @@
-1. How do you rollback a bad deployment?
-Answer:
-	• View history:
+Here is a **clean, professional Markdown format** you can directly append to your `README.md`.
+
+---
+
+## 1️⃣ How do you roll back a bad deployment?
+
+### **Problem**
+
+A new deployment version is unhealthy (pods failing, errors in logs, readiness failing, etc.).
+
+---
+
+### **Steps to Roll Back**
+
+#### **1. View deployment rollout history**
+
+```bash
 kubectl rollout history deployment/myapp
-	• Rollback to previous:
+```
+
+This shows all previous revisions of the deployment.
+
+---
+
+#### **2. Roll back to the previous stable version**
+
+```bash
 kubectl rollout undo deployment/myapp
-	• Or to a specific revision:
+```
+
+This immediately reverts to the last known good revision.
+
+---
+
+#### **3. Roll back to a specific revision (if needed)**
+
+```bash
 kubectl rollout undo deployment/myapp --to-revision=5
-	• Then verify:
-		○ kubectl rollout status deployment/myapp
-kubectl get pods, check logs
+```
+
+Use this when you know exactly which version was stable.
+
+---
+
+#### **4. Verify rollback status**
+
+```bash
+kubectl rollout status deployment/myapp
+```
+
+---
+
+#### **5. Validate application health**
+
+```bash
+kubectl get pods
+kubectl logs <pod-name>
+```
+
+Ensure all pods are running and serving traffic correctly.
+
+---
+
+### **Key Points**
+
+* Rollbacks are **fast and safe** with Deployments.
+* Old ReplicaSets are retained for rollback unless manually cleaned.
+* Always verify pod readiness and logs after rollback.
+
+---
+
+If you want, I can also add:
+
+* A **real rollback lab example**
+* A **failed rollout scenario**
+* A **rollback troubleshooting checklist**
+
+Just tell me!
