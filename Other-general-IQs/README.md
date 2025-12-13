@@ -8,4 +8,4 @@ kubectl rollout undo deployment/myapp
 kubectl rollout undo deployment/myapp --to-revision=5
 	• Then verify:
 		○ kubectl rollout status deployment/myapp
-kubectl get pods, check logs<img width="880" height="319" alt="image" src="https://github.com/user-attachments/assets/f21b9004-9737-4bc1-9de3-682c4913fd7a" />
+kubectl get pods, check logs
