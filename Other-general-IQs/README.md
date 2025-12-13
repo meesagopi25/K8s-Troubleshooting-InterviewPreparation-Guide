@@ -69,7 +69,11 @@ Ensure all pods are running and serving traffic correctly.
 
 ---
 
-## 2 Pod Stuck Waiting for PVC to Bind
+Below is **Point 2**, renumbered and formatted consistently for direct inclusion in your `README.md`.
+
+---
+
+## 2️⃣ Pod Stuck Waiting for PVC to Bind
 
 ### Problem
 
@@ -104,9 +108,7 @@ Check the following:
 
 ---
 
-Certainly. Below is the same content with the **sequence number added as 3**, formatted for direct inclusion in `README.md`.
-
----
+Your README numbering is now consistent for **2️⃣ and 3️⃣**. If you want, I can review the entire document for structure, flow, and troubleshooting completeness.
 
 ## 3️⃣ StatefulSet Pod Fails to Attach the Same Volume on a New Node
 
