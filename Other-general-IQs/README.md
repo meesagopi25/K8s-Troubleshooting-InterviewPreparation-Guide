@@ -69,7 +69,7 @@ Ensure all pods are running and serving traffic correctly.
 
 ---
 
-## Pod Stuck Waiting for PVC to Bind
+## 2 Pod Stuck Waiting for PVC to Bind
 
 ### Problem
 
