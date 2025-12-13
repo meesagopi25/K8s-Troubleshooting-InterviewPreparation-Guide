@@ -147,7 +147,7 @@ Check for:
 
 ---
 
-If you want, I can also renumber **Point 2** to keep the numbering consistent across the entire README.
+
 
 
 
