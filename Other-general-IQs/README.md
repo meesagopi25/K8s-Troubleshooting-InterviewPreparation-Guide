@@ -68,19 +68,41 @@ Ensure all pods are running and serving traffic correctly.
 * Always verify pod readiness and logs after rollback.
 
 ---
-2️⃣ Pod stuck waiting for PVC to bind. Why?
-Answer:
-	• kubectl describe pvc <pvc>:
-		○ Check events, status.
-	• Common causes:
-		○ No matching PV and no dynamic provisioning.
-		○ Wrong storageClassName.
-		○ PV has different accessModes or insufficient size.
-		○ PV has nodeAffinity that doesn’t match the node.
-	• Fix:
-		○ Create proper PV or correct StorageClass.
-Adjust PVC size/access mode / storageClassName.
 
+## Pod Stuck Waiting for PVC to Bind
+
+### Problem
+
+A Pod remains in `Pending` state because its **PersistentVolumeClaim (PVC)** is not bound to a **PersistentVolume (PV)**.
+
+### How to Investigate
+
+```bash
+kubectl describe pvc <pvc-name>
+```
+
+Check the following:
+
+* **Status** (e.g., `Pending`)
+* **Events** section for binding or provisioning errors
+
+### Common Causes
+
+* No matching **PersistentVolume (PV)** exists and **dynamic provisioning** is not enabled
+* Incorrect or non-existent `storageClassName`
+* Mismatch in **accessModes** (e.g., `ReadWriteOnce` vs `ReadWriteMany`)
+* Requested storage size exceeds available PV capacity
+* PV has `nodeAffinity` that does not match the node where the Pod is scheduled
+
+### How to Fix
+
+* Create an appropriate **PersistentVolume**, or enable/fix **dynamic provisioning**
+* Correct the `storageClassName` in the PVC
+* Align **accessModes** between PVC and PV
+* Adjust the requested PVC size to fit available PVs
+* Ensure PV `nodeAffinity` matches the target node
+
+---
 
 
 
