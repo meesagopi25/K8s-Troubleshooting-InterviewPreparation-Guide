@@ -104,5 +104,48 @@ Check the following:
 
 ---
 
+Certainly. Below is the same content with the **sequence number added as 3**, formatted for direct inclusion in `README.md`.
+
+---
+
+## 3️⃣ StatefulSet Pod Fails to Attach the Same Volume on a New Node
+
+### Problem
+
+A StatefulSet Pod fails to start on a new node because the previously attached volume cannot be reattached.
+
+### Common Causes
+
+* The volume uses **ReadWriteOnce (RWO)** and is still attached to the old node
+* The underlying cloud disk has not fully detached yet
+
+  * This can happen during node failure or abrupt termination
+* The **PersistentVolume (PV)** has `nodeAffinity` that does not match the new node
+* Certain storage backends allow a volume to be mounted by **only one node at a time**
+
+### How to Investigate
+
+```bash
+kubectl describe pod <pod-name>
+kubectl describe pv <pv-name>
+```
+
+Check for:
+
+* Volume attachment errors in Pod events
+* `nodeAffinity` constraints on the PV
+* Cloud provider disk attachment state
+
+### How to Fix
+
+* Ensure the failed or old node is properly removed from the cluster
+* Wait for the volume to detach automatically, or detach it manually via the cloud provider
+* Update or recreate the PV if `nodeAffinity` is incorrect
+* Use a storage backend that supports multi-node access if required
+
+---
+
+If you want, I can also renumber **Point 2** to keep the numbering consistent across the entire README.
+
 
 
