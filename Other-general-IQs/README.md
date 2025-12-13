@@ -1,4 +1,4 @@
-8️⃣ How do you rollback a bad deployment?
+1. How do you rollback a bad deployment?
 Answer:
 	• View history:
 kubectl rollout history deployment/myapp
