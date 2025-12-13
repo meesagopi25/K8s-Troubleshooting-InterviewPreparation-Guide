@@ -69,10 +69,3 @@ Ensure all pods are running and serving traffic correctly.
 
 ---
 
-If you want, I can also add:
-
-* A **real rollback lab example**
-* A **failed rollout scenario**
-* A **rollback troubleshooting checklist**
-
-Just tell me!
