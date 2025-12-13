@@ -68,4 +68,19 @@ Ensure all pods are running and serving traffic correctly.
 * Always verify pod readiness and logs after rollback.
 
 ---
+2️⃣ Pod stuck waiting for PVC to bind. Why?
+Answer:
+	• kubectl describe pvc <pvc>:
+		○ Check events, status.
+	• Common causes:
+		○ No matching PV and no dynamic provisioning.
+		○ Wrong storageClassName.
+		○ PV has different accessModes or insufficient size.
+		○ PV has nodeAffinity that doesn’t match the node.
+	• Fix:
+		○ Create proper PV or correct StorageClass.
+Adjust PVC size/access mode / storageClassName.
+
+
+
 
