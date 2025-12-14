@@ -573,6 +573,130 @@ http:
 
 If you want, I can also add a **non–service-mesh canary example using plain Kubernetes Services** or a **comparison of canary vs blue-green deployments** for completeness.
 
+Below is **Point 11**, formatted consistently and ready to append to your `README.md`.
+
+---
+
+## 1️⃣1️⃣ Why `kubectl auth can-i --as default` Fails Without RBAC
+
+### Problem
+
+Running `kubectl auth can-i` with `--as default` (or the default ServiceAccount) returns `no`, even though the ServiceAccount exists.
+
+### Key Reason: Kubernetes Uses a Default-Deny Model
+
+Kubernetes authorization follows a **deny-by-default** security model:
+
+* If no RBAC rule explicitly allows an action, it is denied
+* There are **no implicit permissions** for users or ServiceAccounts
+
+So, without RBAC bindings, authorization always fails.
+
+---
+
+### The `default` ServiceAccount Has No Permissions
+
+Every namespace automatically includes a ServiceAccount named `default`, but:
+
+* It is created **without any Role or ClusterRole bindings**
+* Its purpose is to provide:
+
+  * An identity for Pods
+  * Authentication via a mounted token
+
+It does **not** grant authorization on its own.
+
+Correct identity for the default ServiceAccount:
+
+```text
+system:serviceaccount:default:default
+```
+
+Authorization check example:
+
+```bash
+kubectl auth can-i get pods \
+  --as system:serviceaccount:default:default \
+  -n default
+```
+
+This returns `no` unless RBAC rules are configured.
+
+---
+
+### `--as default` vs ServiceAccount Identity
+
+Using:
+
+```bash
+kubectl auth can-i get pods --as default
+```
+
+Means:
+
+* Kubernetes treats `default` as a **user**
+* No such user exists by default
+
+ServiceAccounts must always be referenced as:
+
+```text
+system:serviceaccount:<namespace>:<name>
+```
+
+---
+
+### Authentication vs Authorization (Critical Distinction)
+
+| Stage          | Description                                    |
+| -------------- | ---------------------------------------------- |
+| Authentication | Verifies *who* you are (token, cert, identity) |
+| Authorization  | Verifies *what* you are allowed to do (RBAC)   |
+
+For the `default` ServiceAccount:
+
+* ✅ Authentication succeeds
+* ❌ Authorization fails (no RBAC permissions)
+
+---
+
+### How Permissions Are Granted
+
+The **only way** to allow actions is through RBAC:
+
+* `Role` or `ClusterRole`
+* `RoleBinding` or `ClusterRoleBinding`
+
+Without these, `kubectl auth can-i` will always return `no`.
+
+---
+
+### Why Kubernetes Works This Way
+
+This design:
+
+* Prevents accidental privilege escalation
+* Reduces blast radius if a Pod is compromised
+* Enforces **least-privilege security**
+
+Permissions must be **explicit, scoped, and auditable**.
+
+---
+
+### Summary
+
+| Question                                          | Answer                                     |
+| ------------------------------------------------- | ------------------------------------------ |
+| Why does `kubectl auth can-i --as default` fail?  | No RBAC permissions exist                  |
+| Is `default` a real user?                         | No                                         |
+| Does the default ServiceAccount have permissions? | No                                         |
+| Is this expected behavior?                        | Yes, by design                             |
+| How to fix it?                                    | Create a RoleBinding or ClusterRoleBinding |
+
+---
+
+
+
+
 
 
 
