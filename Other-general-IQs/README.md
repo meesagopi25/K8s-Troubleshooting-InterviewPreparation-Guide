@@ -694,6 +694,273 @@ Permissions must be **explicit, scoped, and auditable**.
 
 ---
 
+Below is a **clean README-ready addition**, followed by a **decision tree** and **interview-style answers**, exactly as requested.
+
+---
+
+## 1️⃣1️⃣ Node Is `NotReady` — How to Troubleshoot
+
+### Problem
+
+A Kubernetes node is marked as **`NotReady`**, meaning the control plane cannot reliably schedule or run Pods on it.
+
+```bash
+kubectl get nodes
+```
+
+Example:
+
+```text
+NAME            STATUS     ROLES    AGE   VERSION
+worker-node-1   NotReady   <none>   12d   v1.29.2
+```
+
+---
+
+### Step 1: Describe the Node and Inspect Conditions
+
+```bash
+kubectl describe node <node-name>
+```
+
+Focus on the **Conditions** section.
+
+Example:
+
+```text
+Conditions:
+  Type               Status   Reason              Message
+  Ready              False    KubeletNotReady     runtime network not ready
+  DiskPressure       True     DiskPressure        node has disk pressure
+  MemoryPressure     False    SufficientMemory
+  NetworkUnavailable False    CalicoIsUp
+```
+
+#### Common Conditions Explained
+
+| Condition                 | Meaning                   |
+| ------------------------- | ------------------------- |
+| `DiskPressure=True`       | Node disk is nearly full  |
+| `MemoryPressure=True`     | Node is low on memory     |
+| `PIDPressure=True`        | Too many processes        |
+| `NetworkUnavailable=True` | CNI/networking broken     |
+| `Ready=False`             | Node cannot run workloads |
+
+> **Most common real-world cause:** DiskPressure due to full disk.
+
+---
+
+### Step 2: Check Kubelet on the Node
+
+SSH into the node:
+
+```bash
+ssh <node>
+```
+
+Check kubelet status:
+
+```bash
+sudo systemctl status kubelet
+```
+
+View logs:
+
+```bash
+sudo journalctl -u kubelet -n 100
+```
+
+Example error:
+
+```text
+eviction manager: nodefs.available is below eviction threshold
+```
+
+➡️ Indicates disk pressure.
+
+---
+
+### Step 3: Check Container Runtime
+
+If the runtime is down, kubelet cannot function.
+
+For containerd:
+
+```bash
+sudo systemctl status containerd
+```
+
+For Docker (older clusters):
+
+```bash
+sudo systemctl status docker
+```
+
+If runtime is stopped or crashing, the node will remain `NotReady`.
+
+---
+
+### Step 4: Check CNI Plugin Health
+
+Networking issues can mark the node `NotReady`.
+
+```bash
+kubectl get pods -n kube-system
+```
+
+Check CNI pods:
+
+```bash
+kubectl get pods -n kube-system | grep -E "calico|flannel|cilium"
+```
+
+Example:
+
+```text
+calico-node-abc   CrashLoopBackOff
+```
+
+➡️ `NetworkUnavailable=True`
+➡️ Node networking is broken.
+
+---
+
+### Step 5: Verify Disk Space (Very Common Root Cause)
+
+```bash
+df -h
+```
+
+Example:
+
+```text
+Filesystem      Size  Used Avail Use%
+/dev/sda1        50G   49G   1G   98%
+```
+
+Why this matters:
+
+* kubelet enforces **eviction thresholds**
+* When disk is full:
+
+  * Pods are evicted
+  * Node becomes `NotReady`
+
+#### Quick Fixes
+
+```bash
+crictl rmi --prune
+sudo journalctl --vacuum-time=3d
+```
+
+Or expand the disk (cloud environments).
+
+---
+
+### Summary of Common Causes
+
+| Symptom                   | Likely Cause            | Fix                   |
+| ------------------------- | ----------------------- | --------------------- |
+| `DiskPressure=True`       | Disk full               | Clean / expand disk   |
+| `KubeletNotReady`         | kubelet crashed         | Restart kubelet       |
+| Runtime down              | containerd/docker issue | Restart runtime       |
+| `NetworkUnavailable=True` | CNI failure             | Fix CNI               |
+| Node unreachable          | OS / infra issue        | Reboot / replace node |
+
+---
+
+## Decision Tree: Node `NotReady`
+
+```
+Node is NotReady
+        |
+        v
+kubectl describe node
+        |
+        ├── DiskPressure=True?
+        |       └── Yes → Check df -h → Clean disk / expand volume
+        |
+        ├── MemoryPressure=True?
+        |       └── Yes → Check memory → Reduce load / scale
+        |
+        ├── NetworkUnavailable=True?
+        |       └── Yes → Check CNI pods → Fix Calico/Flannel/Cilium
+        |
+        ├── KubeletNotReady?
+        |       └── Yes → Check kubelet logs → Restart kubelet
+        |
+        ├── Container runtime down?
+        |       └── Yes → Restart containerd/docker
+        |
+        └── Node unreachable?
+                └── Infra issue → Reboot / replace node
+```
+
+---
+
+## Interview-Style Answers (High-Quality)
+
+### Q1: What does a `NotReady` node indicate?
+
+**Answer:**
+It means kubelet on the node cannot communicate properly with the control plane or cannot meet required health conditions, so Kubernetes stops scheduling workloads on it.
+
+---
+
+### Q2: What is the first command you run?
+
+**Answer:**
+`kubectl describe node <node>` to inspect node conditions such as DiskPressure, MemoryPressure, and NetworkUnavailable.
+
+---
+
+### Q3: What is the most common cause of `NotReady` in production?
+
+**Answer:**
+Disk exhaustion. When disk usage crosses kubelet eviction thresholds, the node is marked `NotReady`.
+
+---
+
+### Q4: How does disk pressure affect node readiness?
+
+**Answer:**
+Kubelet evicts Pods and eventually marks the node `NotReady` to prevent further scheduling when available disk falls below thresholds.
+
+---
+
+### Q5: Can CNI issues cause `NotReady`?
+
+**Answer:**
+Yes. If the CNI plugin fails, `NetworkUnavailable=True`, and the node cannot participate in cluster networking.
+
+---
+
+### Q6: Why does a container runtime failure cause `NotReady`?
+
+**Answer:**
+Kubelet depends on the container runtime to manage Pods. If the runtime is down, kubelet cannot function.
+
+---
+
+### Q7: How do you fix a permanently broken node?
+
+**Answer:**
+Cordon and drain the node, then delete or replace it:
+
+```bash
+kubectl cordon <node>
+kubectl drain <node> --ignore-daemonsets
+kubectl delete node <node>
+```
+
+---
+
+### One-Line Interview Summary
+
+> “For a `NotReady` node, I start with `kubectl describe node`, then check disk, kubelet, container runtime, and CNI — disk pressure is the most common cause.”
+
+---
+
 
 
 
