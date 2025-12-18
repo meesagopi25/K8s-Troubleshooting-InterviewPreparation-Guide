@@ -1168,7 +1168,11 @@ Below is a **clean, copy-paste ready README.md section**, written in **documenta
 
 ---
 
-## 2️⃣5️⃣ KIND-Specific HPA Demo (CPU-Based Autoscaling)
+Below is the **same README section**, simply **renumbered and renamed as Question 14**, ready to paste into your document.
+
+---
+
+## 1️⃣4️⃣ KIND-Specific HPA Demo (CPU-Based Autoscaling)
 
 This section demonstrates **Horizontal Pod Autoscaler (HPA)** behavior in a **KIND (Kubernetes in Docker)** cluster and highlights the **mandatory requirement of metrics-server**.
 
@@ -1396,14 +1400,4 @@ kubectl delete hpa hpa-demo
 
 ---
 
-
-
-
-
-
-
-
-
-
-
-
+If you want the numbering aligned across your **entire README**, I can reindex everything cleanly in one pass.
