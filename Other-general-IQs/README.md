@@ -1164,6 +1164,239 @@ All nodes store the **same logical state**, synchronized via Raft.
 
 ---
 
+Below is a **clean, copy-paste ready README.md section**, written in **documentation style**, converting the KIND-specific HPA demo into a reusable guide.
+
+---
+
+## 2️⃣5️⃣ KIND-Specific HPA Demo (CPU-Based Autoscaling)
+
+This section demonstrates **Horizontal Pod Autoscaler (HPA)** behavior in a **KIND (Kubernetes in Docker)** cluster and highlights the **mandatory requirement of metrics-server**.
+
+---
+
+### Objective
+
+* Install and configure `metrics-server` in KIND
+* Deploy a CPU-bound application
+* Configure HPA based on CPU utilization
+* Generate load and observe automatic scaling
+* Understand why HPA may fail without metrics
+
+---
+
+## Prerequisites
+
+* KIND cluster running
+* `kubectl` configured to access the cluster
+
+Verify cluster access:
+
+```bash
+kubectl get nodes
+```
+
+---
+
+## Step 1: Install metrics-server (Mandatory for KIND)
+
+HPA depends on the `metrics.k8s.io` API, which is provided by **metrics-server**.
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+---
+
+## Step 2: Patch metrics-server for KIND
+
+KIND uses self-signed kubelet certificates, so metrics-server must be patched.
+
+```bash
+kubectl -n kube-system edit deployment metrics-server
+```
+
+Add the following under `args:`:
+
+```yaml
+- --kubelet-insecure-tls
+- --kubelet-preferred-address-types=InternalIP
+```
+
+Save and exit.
+
+---
+
+## Step 3: Verify metrics-server
+
+```bash
+kubectl get apiservices | grep metrics
+```
+
+Expected output:
+
+```text
+v1beta1.metrics.k8s.io   kube-system/metrics-server   True
+```
+
+Verify metrics availability:
+
+```bash
+kubectl top nodes
+kubectl top pods
+```
+
+If these commands work, HPA can function correctly.
+
+---
+
+## Step 4: Deploy a CPU-Bound Application
+
+Create a simple nginx deployment:
+
+```bash
+kubectl create deployment hpa-demo --image=nginx
+```
+
+Patch the deployment with **CPU requests and limits** (critical for HPA):
+
+```bash
+kubectl patch deployment hpa-demo -p '
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [{
+          "name": "nginx",
+          "image": "nginx",
+          "resources": {
+            "requests": {
+              "cpu": "100m"
+            },
+            "limits": {
+              "cpu": "500m"
+            }
+          }
+        }]
+      }
+    }
+  }
+}'
+```
+
+---
+
+## Step 5: Create the HPA
+
+Configure HPA to scale when CPU exceeds **50% of requested CPU**:
+
+```bash
+kubectl autoscale deployment hpa-demo \
+  --cpu-percent=50 \
+  --min=1 \
+  --max=5
+```
+
+Check HPA status:
+
+```bash
+kubectl get hpa
+```
+
+---
+
+## Step 6: Generate CPU Load
+
+Start a load generator pod:
+
+```bash
+kubectl run -i --tty load-generator \
+  --image=busybox \
+  --restart=Never \
+  -- /bin/sh
+```
+
+Inside the pod, run:
+
+```sh
+while true; do wget -q -O- http://hpa-demo; done
+```
+
+This continuously hits the nginx service and increases CPU usage.
+
+---
+
+## Step 7: Observe Autoscaling
+
+In another terminal:
+
+```bash
+kubectl get hpa -w
+```
+
+You should observe CPU utilization exceeding the target and replicas increasing:
+
+```text
+TARGETS   75%/50%
+```
+
+Verify pod scaling:
+
+```bash
+kubectl get pods
+```
+
+---
+
+## Step 8: Scale Down After Load Stops
+
+Stop the load generator:
+
+```sh
+Ctrl + C
+exit
+```
+
+Delete the pod:
+
+```bash
+kubectl delete pod load-generator
+```
+
+Pods will scale down **after the HPA stabilization window** (typically ~5 minutes).
+
+---
+
+## Step 9: Cleanup
+
+```bash
+kubectl delete deployment hpa-demo
+kubectl delete hpa hpa-demo
+```
+
+---
+
+## Key Takeaways
+
+* HPA **requires metrics-server**
+* HPA scales based on **CPU utilization relative to requests**, not limits
+* KIND requires special flags for metrics-server due to self-signed certificates
+* Scaling is **not instant** due to stabilization windows
+
+---
+
+## Interview-Ready Summary
+
+> “In KIND clusters, HPA works only after installing and patching metrics-server. Once metrics are available, HPA scales pods based on CPU utilization as a percentage of requested CPU.”
+
+---
+
+## One-Line Conclusion
+
+> **No metrics-server = no HPA, regardless of CPU usage.**
+
+---
+
+
 
 
 
