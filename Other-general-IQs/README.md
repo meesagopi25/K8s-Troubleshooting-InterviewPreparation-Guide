@@ -1164,14 +1164,6 @@ All nodes store the **same logical state**, synchronized via Raft.
 
 ---
 
-Below is a **clean, copy-paste ready README.md section**, written in **documentation style**, converting the KIND-specific HPA demo into a reusable guide.
-
----
-
-Below is the **same README section**, simply **renumbered and renamed as Question 14**, ready to paste into your document.
-
----
-
 ## 1️⃣4️⃣ KIND-Specific HPA Demo (CPU-Based Autoscaling)
 
 This section demonstrates **Horizontal Pod Autoscaler (HPA)** behavior in a **KIND (Kubernetes in Docker)** cluster and highlights the **mandatory requirement of metrics-server**.
