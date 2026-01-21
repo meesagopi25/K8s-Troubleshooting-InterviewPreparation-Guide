@@ -67,373 +67,245 @@ To upgrade a Kubernetes cluster **safely and predictably** while:
 
 ## 4. Pre-Upgrade Prerequisites (MANDATORY)
 
-### 4.1 Version Compatibility Check
+Below is a **production-grade `README.md` section** you can **directly paste into your Kubernetes Upgrade Runbook** as **Section 4.1 – Version Compatibility Check**.
+It is written in **audit-friendly, enterprise documentation style** and explicitly explains the **script purpose, usage, logic, outputs, and Go/No-Go criteria**.
 
-Confirm compatibility for:
+---
 
-* Kubernetes target version
-* CNI (Calico / VPC CNI)
+# 4.1 Version Compatibility Check (MANDATORY)
+
+## Purpose
+
+Before upgrading Kubernetes, **all cluster add-ons and integrations MUST be verified for compatibility with the target Kubernetes version**.
+This step prevents **cluster outages, networking failures, storage attach errors, and admission controller blocks**.
+
+This organization uses an **automated pre-upgrade compatibility script** to enforce this requirement for **Amazon EKS** clusters.
+
+---
+
+## Why This Step Is Mandatory
+
+Kubernetes **minor version upgrades can remove APIs and change behavior**.
+If any add-on is incompatible:
+
+* Nodes may fail to join the cluster
+* Pods may not receive IP addresses
+* DNS may stop resolving
+* Persistent volumes may fail to attach
+* Admission controllers may block workloads
+
+**Rule (Non-Negotiable)**
+
+> **If ANY component is incompatible, the upgrade must NOT proceed.**
+
+---
+
+## Scope of Compatibility Validation
+
+The automated check validates compatibility for:
+
+* Kubernetes control plane (current vs target)
+* AWS VPC CNI
 * CoreDNS
 * kube-proxy
-* CSI drivers (EBS/EFS)
-* Ingress controllers
-* Service mesh (Istio, Linkerd)
-* Admission controllers (OPA/Kyverno)
-
-> **Rule:** No unsupported add-ons in prod.
-
-Below is a **hands-on, production-grade “HOW TO” guide** for **Section 4.1 – Version Compatibility Check**, with **exact commands, decision points, and pass/fail criteria**.
-This is written so you can **execute it step by step before a Kubernetes upgrade** (example: **1.33 → 1.34**), especially on **Amazon EKS**.
+* EBS CSI driver
+* EFS CSI driver
+* Ingress controllers (AWS Load Balancer Controller)
+* Service mesh (Istio / Linkerd – detection + guardrail)
+* Admission controllers (OPA Gatekeeper / Kyverno – detection + guardrail)
 
 ---
 
-# 4.1 Version Compatibility Check – HOW TO (Production Grade)
+## Automation Used
 
-## Objective
+Script name:
 
-Ensure **every cluster component is supported** on the **target Kubernetes version** *before* upgrade.
+```
+eks-preupgrade-check.sh
+```
 
-**Golden rule**
+Purpose:
 
-> If any component is unsupported → **STOP THE UPGRADE**
+* Collect current component versions
+* Query AWS for **officially supported versions** for the target Kubernetes release
+* Perform **automatic PASS / FAIL decisions**
+* Generate a **formal Go / No-Go report**
+
+This script is **read-only** and safe to run in production environments.
 
 ---
 
-## STEP 0: Define Current and Target Versions
+## Prerequisites
 
-### Get current Kubernetes version
+Before running the script, ensure:
 
-```bash
-kubectl version --short
-```
+* `kubectl` is configured for the target cluster
+* `aws` CLI is configured with permissions:
 
-Example:
-
-```
-Server Version: v1.33.4
-```
-
-### Define target version
-
-```
-Target: v1.34.x
-```
+  * `eks:ListAddons`
+  * `eks:DescribeAddon`
+  * `eks:DescribeAddonVersions`
+* `jq` is installed on the execution host
 
 ---
 
-## STEP 1: Kubernetes Version Support (Baseline)
-
-### For EKS
-
-Check supported versions:
+## Script Usage
 
 ```bash
-aws eks describe-addon-versions --kubernetes-version 1.34
+./eks-preupgrade-check.sh <cluster-name> <aws-region> <target-k8s-version>
 ```
 
-✔ PASS if:
-
-* Target version is listed
-* Add-ons support that version
-
-❌ FAIL if:
-
-* Version not listed (upgrade blocked)
-
----
-
-## STEP 2: CNI Compatibility
-
-### A. AWS VPC CNI (EKS default)
-
-#### Check installed version
+### Example
 
 ```bash
-kubectl -n kube-system get daemonset aws-node \
-  -o jsonpath='{.spec.template.spec.containers[0].image}'
-```
-
-Example:
-
-```
-amazon/aws-vpc-cni:v1.18.1
-```
-
-#### Check supported version
-
-```bash
-aws eks describe-addon-versions \
-  --addon-name vpc-cni \
-  --kubernetes-version 1.34
-```
-
-✔ PASS if:
-
-* Installed version ≤ supported version
-* Upgrade path exists
-
-❌ FAIL if:
-
-* Version not supported on target Kubernetes
-
----
-
-### B. Calico (if used)
-
-```bash
-kubectl get pods -n calico-system
-kubectl get ds -n calico-system calico-node \
-  -o jsonpath='{.spec.template.spec.containers[0].image}'
-```
-
-Check Calico compatibility matrix:
-
-* Kubernetes version
-* Calico release
-
-✔ PASS only if explicitly supported
-
----
-
-## STEP 3: CoreDNS Compatibility
-
-### Check current version
-
-```bash
-kubectl -n kube-system get deployment coredns \
-  -o jsonpath='{.spec.template.spec.containers[0].image}'
-```
-
-Example:
-
-```
-coredns/coredns:v1.11.1
-```
-
-### Check target compatibility
-
-```bash
-aws eks describe-addon-versions \
-  --addon-name coredns \
-  --kubernetes-version 1.34
-```
-
-✔ PASS if:
-
-* CoreDNS version is listed for target K8s
-
-❌ FAIL if:
-
-* CoreDNS version unsupported (DNS outage risk)
-
----
-
-## STEP 4: kube-proxy Compatibility
-
-### Check current version
-
-```bash
-kubectl -n kube-system get daemonset kube-proxy \
-  -o jsonpath='{.spec.template.spec.containers[0].image}'
-```
-
-Example:
-
-```
-eks/kube-proxy:v1.33.4
-```
-
-### Check target compatibility
-
-```bash
-aws eks describe-addon-versions \
-  --addon-name kube-proxy \
-  --kubernetes-version 1.34
-```
-
-✔ PASS if:
-
-* kube-proxy version aligns with target Kubernetes
-
----
-
-## STEP 5: CSI Drivers (Storage – CRITICAL)
-
-### A. EBS CSI Driver
-
-```bash
-kubectl get pods -n kube-system | grep ebs
-```
-
-```bash
-kubectl -n kube-system get deployment ebs-csi-controller \
-  -o jsonpath='{.spec.template.spec.containers[0].image}'
-```
-
-Check compatibility:
-
-```bash
-aws eks describe-addon-versions \
-  --addon-name aws-ebs-csi-driver \
-  --kubernetes-version 1.34
-```
-
-✔ PASS if supported
-❌ FAIL = **volume attach failures**
-
----
-
-### B. EFS CSI Driver (if used)
-
-```bash
-kubectl get pods -n kube-system | grep efs
-```
-
-Validate version against AWS docs for target Kubernetes.
-
----
-
-## STEP 6: Ingress Controller Compatibility
-
-### Identify ingress controller
-
-```bash
-kubectl get pods -A | grep ingress
-```
-
-Common ones:
-
-* NGINX Ingress
-* ALB Controller
-* Traefik
-
-### Example: AWS Load Balancer Controller
-
-```bash
-kubectl -n kube-system get deployment aws-load-balancer-controller \
-  -o jsonpath='{.spec.template.spec.containers[0].image}'
-```
-
-Check version compatibility:
-
-```bash
-aws eks describe-addon-versions \
-  --addon-name aws-load-balancer-controller \
-  --kubernetes-version 1.34
-```
-
-✔ PASS if compatible
-❌ FAIL = **traffic outage risk**
-
----
-
-## STEP 7: Service Mesh Compatibility
-
-### A. Istio
-
-**Istio**
-
-```bash
-istioctl version
-```
-
-Check Istio support matrix:
-
-* Kubernetes 1.34 supported?
-* Control plane + data plane compatible?
-
-✔ PASS only if explicitly supported
-
----
-
-### B. Linkerd
-
-**Linkerd**
-
-```bash
-linkerd version
-```
-
-Validate against Linkerd compatibility docs.
-
----
-
-## STEP 8: Admission Controllers (OPA / Kyverno)
-
-### A. OPA Gatekeeper
-
-**OPA Gatekeeper**
-
-```bash
-kubectl get pods -n gatekeeper-system
-```
-
-Check:
-
-* Gatekeeper version
-* Kubernetes API compatibility
-* CRDs supported
-
----
-
-### B. Kyverno
-
-**Kyverno**
-
-```bash
-kubectl get pods -n kyverno
-```
-
-Verify Kyverno supports target Kubernetes version.
-
-❌ If incompatible → **disable policies before upgrade**
-
----
-
-## STEP 9: Deprecated API Check (MANDATORY)
-
-```bash
-kubectl api-resources
-```
-
-Recommended tools:
-
-```bash
-kubent
-pluto detect-all-in-cluster
-```
-
-❌ FAIL if:
-
-* Deprecated APIs removed in target version are still used
-
----
-
-## STEP 10: Decision Matrix (GO / NO-GO)
-
-| Component             | Status      |
-| --------------------- | ----------- |
-| Kubernetes version    | PASS / FAIL |
-| CNI                   | PASS / FAIL |
-| CoreDNS               | PASS / FAIL |
-| kube-proxy            | PASS / FAIL |
-| CSI drivers           | PASS / FAIL |
-| Ingress               | PASS / FAIL |
-| Service mesh          | PASS / FAIL |
-| Admission controllers | PASS / FAIL |
-
-### Upgrade is allowed ONLY if:
-
-```
-ALL = PASS
+./eks-preupgrade-check.sh prod-eks us-east-1 1.34
 ```
 
 ---
 
-## Production Rule (Non-Negotiable)
+## What the Script Does (Execution Logic)
 
-> **Never upgrade Kubernetes hoping add-ons will work.**
-> Upgrade **add-ons first**, then Kubernetes.
+1. **Detects current Kubernetes server version**
+2. **Enumerates EKS-managed add-ons**
+3. **Queries AWS support matrix** for the target Kubernetes version
+4. **Compares installed vs supported versions**
+5. **Detects risk components** that require manual verification
+6. **Generates a formal Go / No-Go decision**
+
+---
+
+## Output Artifacts
+
+### 1. Console Output
+
+Immediate visibility during execution.
+
+### 2. Go / No-Go Report File
+
+Generated file:
+
+```
+eks-upgrade-go-nogo-report.txt
+```
+
+This file is:
+
+* Attached to CAB tickets
+* Archived in CI/CD pipelines
+* Stored as upgrade evidence
+
+---
+
+## Sample Report (Excerpt)
+
+```
+[EKS Managed Add-ons Compatibility]
+[vpc-cni]
+Installed Version : v1.21.1-eksbuild.1
+Supported Versions: v1.21.0-eksbuild.4 v1.21.1-eksbuild.1
+✅ PASS
+
+[coredns]
+Installed Version : v1.11.1-eksbuild.3
+Supported Versions: v1.11.1-eksbuild.4
+❌ FAIL
+
+==================================================
+FINAL DECISION: ❌ NO-GO – REMEDIATION REQUIRED
+==================================================
+```
+
+---
+
+## Decision Criteria (Go / No-Go)
+
+### ✅ GO (Upgrade Allowed)
+
+* All EKS-managed add-ons show **PASS**
+* No incompatible service mesh detected
+* No blocking admission controllers detected
+* FINAL DECISION = **GO**
+
+### ❌ NO-GO (Upgrade Blocked)
+
+Upgrade must be **stopped immediately** if:
+
+* Any add-on version is unsupported
+* Service mesh compatibility is unknown
+* Admission controllers require review
+* FINAL DECISION = **NO-GO**
+
+---
+
+## Required Actions on NO-GO
+
+If the report indicates **NO-GO**:
+
+1. Upgrade incompatible add-ons **first**
+2. Validate upgraded add-ons are running
+3. Re-run the script
+4. Proceed only when FINAL DECISION = **GO**
+
+---
+
+## Integration With Upgrade Workflow
+
+This step is executed:
+
+* **Before** control plane upgrade
+* **Before** node group upgrades
+* **Before** CAB approval is finalized
+
+### CI/CD Integration (Recommended)
+
+This script is executed as a **pre-flight gate** in Jenkins pipelines.
+Pipeline execution **must fail automatically** if FINAL DECISION = NO-GO.
+
+---
+
+## Audit and Compliance Notes
+
+* Output report is retained for **change records**
+* Script ensures upgrades are:
+
+  * Predictable
+  * Repeatable
+  * Vendor-supported
+* Prevents undocumented, risky upgrades
+
+---
+
+## Summary
+
+This compatibility check ensures that:
+
+* Kubernetes upgrades are **safe**
+* Add-ons remain **vendor-supported**
+* Failures are detected **before production impact**
+* Upgrade decisions are **evidence-based**
+
+**No compatibility check = No upgrade.**
+
+---
+
+### Next Runbook Step
+
+Proceed to **4.2 – API Deprecation and Removal Audit** only if:
+
+```
+FINAL DECISION = GO
+```
+
+---
+
+If you want, I can also:
+
+* Convert this into a **PDF runbook**
+* Add a **diagram showing upgrade dependency order**
+* Provide a **CAB approval template**
+* Integrate this section into your **Terraform/Jenkins upgrade SOP**
+
+Just tell me how you want to proceed.
 
 ---
 
