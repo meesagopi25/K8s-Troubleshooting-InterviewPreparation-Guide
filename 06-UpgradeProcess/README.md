@@ -82,6 +82,359 @@ Confirm compatibility for:
 
 > **Rule:** No unsupported add-ons in prod.
 
+Below is a **hands-on, production-grade “HOW TO” guide** for **Section 4.1 – Version Compatibility Check**, with **exact commands, decision points, and pass/fail criteria**.
+This is written so you can **execute it step by step before a Kubernetes upgrade** (example: **1.33 → 1.34**), especially on **Amazon EKS**.
+
+---
+
+# 4.1 Version Compatibility Check – HOW TO (Production Grade)
+
+## Objective
+
+Ensure **every cluster component is supported** on the **target Kubernetes version** *before* upgrade.
+
+**Golden rule**
+
+> If any component is unsupported → **STOP THE UPGRADE**
+
+---
+
+## STEP 0: Define Current and Target Versions
+
+### Get current Kubernetes version
+
+```bash
+kubectl version --short
+```
+
+Example:
+
+```
+Server Version: v1.33.4
+```
+
+### Define target version
+
+```
+Target: v1.34.x
+```
+
+---
+
+## STEP 1: Kubernetes Version Support (Baseline)
+
+### For EKS
+
+Check supported versions:
+
+```bash
+aws eks describe-addon-versions --kubernetes-version 1.34
+```
+
+✔ PASS if:
+
+* Target version is listed
+* Add-ons support that version
+
+❌ FAIL if:
+
+* Version not listed (upgrade blocked)
+
+---
+
+## STEP 2: CNI Compatibility
+
+### A. AWS VPC CNI (EKS default)
+
+#### Check installed version
+
+```bash
+kubectl -n kube-system get daemonset aws-node \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Example:
+
+```
+amazon/aws-vpc-cni:v1.18.1
+```
+
+#### Check supported version
+
+```bash
+aws eks describe-addon-versions \
+  --addon-name vpc-cni \
+  --kubernetes-version 1.34
+```
+
+✔ PASS if:
+
+* Installed version ≤ supported version
+* Upgrade path exists
+
+❌ FAIL if:
+
+* Version not supported on target Kubernetes
+
+---
+
+### B. Calico (if used)
+
+```bash
+kubectl get pods -n calico-system
+kubectl get ds -n calico-system calico-node \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Check Calico compatibility matrix:
+
+* Kubernetes version
+* Calico release
+
+✔ PASS only if explicitly supported
+
+---
+
+## STEP 3: CoreDNS Compatibility
+
+### Check current version
+
+```bash
+kubectl -n kube-system get deployment coredns \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Example:
+
+```
+coredns/coredns:v1.11.1
+```
+
+### Check target compatibility
+
+```bash
+aws eks describe-addon-versions \
+  --addon-name coredns \
+  --kubernetes-version 1.34
+```
+
+✔ PASS if:
+
+* CoreDNS version is listed for target K8s
+
+❌ FAIL if:
+
+* CoreDNS version unsupported (DNS outage risk)
+
+---
+
+## STEP 4: kube-proxy Compatibility
+
+### Check current version
+
+```bash
+kubectl -n kube-system get daemonset kube-proxy \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Example:
+
+```
+eks/kube-proxy:v1.33.4
+```
+
+### Check target compatibility
+
+```bash
+aws eks describe-addon-versions \
+  --addon-name kube-proxy \
+  --kubernetes-version 1.34
+```
+
+✔ PASS if:
+
+* kube-proxy version aligns with target Kubernetes
+
+---
+
+## STEP 5: CSI Drivers (Storage – CRITICAL)
+
+### A. EBS CSI Driver
+
+```bash
+kubectl get pods -n kube-system | grep ebs
+```
+
+```bash
+kubectl -n kube-system get deployment ebs-csi-controller \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Check compatibility:
+
+```bash
+aws eks describe-addon-versions \
+  --addon-name aws-ebs-csi-driver \
+  --kubernetes-version 1.34
+```
+
+✔ PASS if supported
+❌ FAIL = **volume attach failures**
+
+---
+
+### B. EFS CSI Driver (if used)
+
+```bash
+kubectl get pods -n kube-system | grep efs
+```
+
+Validate version against AWS docs for target Kubernetes.
+
+---
+
+## STEP 6: Ingress Controller Compatibility
+
+### Identify ingress controller
+
+```bash
+kubectl get pods -A | grep ingress
+```
+
+Common ones:
+
+* NGINX Ingress
+* ALB Controller
+* Traefik
+
+### Example: AWS Load Balancer Controller
+
+```bash
+kubectl -n kube-system get deployment aws-load-balancer-controller \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+Check version compatibility:
+
+```bash
+aws eks describe-addon-versions \
+  --addon-name aws-load-balancer-controller \
+  --kubernetes-version 1.34
+```
+
+✔ PASS if compatible
+❌ FAIL = **traffic outage risk**
+
+---
+
+## STEP 7: Service Mesh Compatibility
+
+### A. Istio
+
+**Istio**
+
+```bash
+istioctl version
+```
+
+Check Istio support matrix:
+
+* Kubernetes 1.34 supported?
+* Control plane + data plane compatible?
+
+✔ PASS only if explicitly supported
+
+---
+
+### B. Linkerd
+
+**Linkerd**
+
+```bash
+linkerd version
+```
+
+Validate against Linkerd compatibility docs.
+
+---
+
+## STEP 8: Admission Controllers (OPA / Kyverno)
+
+### A. OPA Gatekeeper
+
+**OPA Gatekeeper**
+
+```bash
+kubectl get pods -n gatekeeper-system
+```
+
+Check:
+
+* Gatekeeper version
+* Kubernetes API compatibility
+* CRDs supported
+
+---
+
+### B. Kyverno
+
+**Kyverno**
+
+```bash
+kubectl get pods -n kyverno
+```
+
+Verify Kyverno supports target Kubernetes version.
+
+❌ If incompatible → **disable policies before upgrade**
+
+---
+
+## STEP 9: Deprecated API Check (MANDATORY)
+
+```bash
+kubectl api-resources
+```
+
+Recommended tools:
+
+```bash
+kubent
+pluto detect-all-in-cluster
+```
+
+❌ FAIL if:
+
+* Deprecated APIs removed in target version are still used
+
+---
+
+## STEP 10: Decision Matrix (GO / NO-GO)
+
+| Component             | Status      |
+| --------------------- | ----------- |
+| Kubernetes version    | PASS / FAIL |
+| CNI                   | PASS / FAIL |
+| CoreDNS               | PASS / FAIL |
+| kube-proxy            | PASS / FAIL |
+| CSI drivers           | PASS / FAIL |
+| Ingress               | PASS / FAIL |
+| Service mesh          | PASS / FAIL |
+| Admission controllers | PASS / FAIL |
+
+### Upgrade is allowed ONLY if:
+
+```
+ALL = PASS
+```
+
+---
+
+## Production Rule (Non-Negotiable)
+
+> **Never upgrade Kubernetes hoping add-ons will work.**
+> Upgrade **add-ons first**, then Kubernetes.
+
 ---
 
 ### 4.2 API Deprecation & Removal Audit
