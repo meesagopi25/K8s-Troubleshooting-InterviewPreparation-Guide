@@ -1255,6 +1255,350 @@ Just tell me the next step.
 * Enough spare capacity to drain one node
 * HPA functional
 
+Below is a **production-grade, step-by-step runbook section** for **4.4 – Capacity & Scaling Readiness**, written so it can be **directly added to your Kubernetes upgrade run book** and **executed deterministically**.
+
+This section ensures the cluster can **absorb pod evictions and rescheduling** during node drains and rolling upgrades, especially on **Amazon EKS**.
+
+---
+
+# 4.4 Capacity & Scaling Readiness (MANDATORY)
+
+## Objective
+
+Verify that the cluster has **sufficient elasticity** to:
+
+* Drain at least **one node at a time**
+* Reschedule evicted pods successfully
+* Scale workloads automatically under load
+
+**Rule (Non-Negotiable)**
+
+> **If the cluster cannot drain one node without scheduling failures, the upgrade MUST NOT proceed.**
+
+---
+
+## Scope
+
+This check validates:
+
+1. Cluster Autoscaler (CA) is enabled and healthy
+2. Spare capacity exists to drain one node
+3. Horizontal Pod Autoscaler (HPA) is functional
+
+---
+
+## Step 1: Confirm Cluster Autoscaler Is Enabled
+
+### 1.1 Detect Cluster Autoscaler
+
+```bash
+kubectl get pods -n kube-system | grep cluster-autoscaler
+```
+
+**Expected**
+
+```
+cluster-autoscaler-xxxx   1/1   Running
+```
+
+### 1.2 Verify Autoscaler Logs (Health Check)
+
+```bash
+kubectl logs -n kube-system deploy/cluster-autoscaler | tail -n 50
+```
+
+**PASS if logs show**
+
+* No fatal errors
+* Messages such as:
+
+  * `Successfully scaled node group`
+  * `Scale-up successful`
+  * `No scale-up needed`
+
+**FAIL if logs show**
+
+* IAM permission errors
+* “Failed to scale”
+* Repeated crashes / restarts
+
+---
+
+### 1.3 Verify Autoscaler Configuration (Critical)
+
+```bash
+kubectl -n kube-system describe deployment cluster-autoscaler
+```
+
+Check:
+
+* Correct cluster name
+* Correct AWS region
+* Node group discovery enabled
+* `--balance-similar-node-groups=true`
+* `--skip-nodes-with-system-pods=false`
+
+**FAIL if misconfigured** → Upgrade blocked.
+
+---
+
+## Step 2: Validate Node Group Scaling Limits
+
+### 2.1 Identify Node Groups
+
+```bash
+kubectl get nodes -o wide
+```
+
+Correlate nodes to:
+
+* Managed Node Groups
+* Auto Scaling Groups (ASGs)
+
+---
+
+### 2.2 Check ASG / Node Group Limits
+
+Ensure **maxSize > desiredSize**.
+
+Example (EKS managed node group):
+
+```bash
+aws eks describe-nodegroup \
+  --cluster-name <cluster> \
+  --nodegroup-name <ng-name> \
+  --query 'nodegroup.scalingConfig'
+```
+
+**PASS**
+
+```
+minSize < desiredSize < maxSize
+```
+
+**FAIL**
+
+```
+desiredSize == maxSize
+```
+
+➡ No room to scale during drain → **BLOCK UPGRADE**
+
+---
+
+## Step 3: Validate Spare Capacity to Drain One Node
+
+### 3.1 Capture Current Utilization
+
+```bash
+kubectl top nodes
+```
+
+Example:
+
+```
+NAME        CPU(%)   MEMORY(%)
+node-1      55%      60%
+node-2      48%      52%
+node-3      50%      58%
+```
+
+---
+
+### 3.2 Capacity Rule (Production Standard)
+
+Cluster must be able to **lose one node** and still schedule all pods.
+
+**PASS if**
+
+* Average node utilization < **70%**
+* No node > **80%** sustained
+* Enough headroom for pod rescheduling
+
+**FAIL if**
+
+* Nodes already near capacity
+* Pod scheduling failures likely
+
+---
+
+### 3.3 Dry-Run Drain Test (MANDATORY)
+
+```bash
+kubectl drain <node-name> \
+  --ignore-daemonsets \
+  --delete-emptydir-data \
+  --dry-run=server
+```
+
+**PASS**
+
+* No scheduling errors
+* No PDB blocks
+* No `Insufficient cpu/memory` errors
+
+**FAIL**
+
+* Any pod fails to schedule
+* Insufficient resources
+* Evictions blocked
+
+➡ **Upgrade blocked until capacity is increased**
+
+---
+
+## Step 4: Horizontal Pod Autoscaler (HPA) Validation
+
+### 4.1 Identify HPAs
+
+```bash
+kubectl get hpa -A
+```
+
+Example:
+
+```
+NAMESPACE   NAME      TARGETS     MINPODS   MAXPODS   REPLICAS
+prod        api-hpa   45%/70%     2          10         3
+```
+
+---
+
+### 4.2 Verify Metrics Availability
+
+```bash
+kubectl get pods -n kube-system | grep metrics-server
+```
+
+**PASS**
+
+```
+metrics-server   Running
+```
+
+**FAIL**
+
+* Metrics server missing or crashlooping
+* HPA will not function
+
+---
+
+### 4.3 Verify HPA Can Scale (Functional Test)
+
+Pick a non-production or test workload.
+
+```bash
+kubectl describe hpa <hpa-name> -n <namespace>
+```
+
+Check:
+
+* Current metrics populated
+* No events like:
+
+  * `failed to get cpu utilization`
+
+**Optional functional test**
+
+* Temporarily increase load
+* Confirm replicas scale up
+* Confirm scale-down works after load removal
+
+---
+
+## Step 5: Special Considerations for System Components
+
+### CoreDNS
+
+* Replicas ≥ 2
+* Autoscaling enabled (if applicable)
+* PDB allows eviction
+
+### Ingress Controllers
+
+* Replicas ≥ 2
+* HPA or sufficient static replicas
+* Load balancer healthy
+
+---
+
+## Step 6: Go / No-Go Decision
+
+### ✅ GO (Proceed)
+
+All conditions met:
+
+* Cluster Autoscaler running and healthy
+* Node groups can scale up
+* One node can be drained without scheduling failures
+* HPA functional with valid metrics
+
+---
+
+### ❌ NO-GO (Block Upgrade)
+
+Upgrade must be blocked if:
+
+* Autoscaler disabled or unhealthy
+* Node groups at max capacity
+* Drain dry-run fails
+* HPA not functional
+
+---
+
+## Step 7: Evidence Collection (Audit Requirement)
+
+Save outputs:
+
+```bash
+kubectl top nodes > node-utilization.txt
+kubectl get hpa -A > hpa-status.txt
+kubectl logs -n kube-system deploy/cluster-autoscaler > autoscaler-logs.txt
+```
+
+Attach to:
+
+* Change record
+* Upgrade run book
+* CI/CD artifacts
+
+---
+
+## Executive Summary
+
+* Upgrades **evict pods**
+* Evicted pods **must reschedule**
+* Autoscaling **must work**
+* Capacity **must exist**
+
+**No spare capacity = No upgrade**
+
+---
+
+## Next Runbook Step
+
+Proceed to:
+
+### **5. Backup Strategy & Execution**
+
+Only after:
+
+```
+ALL CAPACITY & SCALING CHECKS = PASS
+```
+
+---
+
+If you want, I can next:
+
+* Automate this check as a **single script**
+* Integrate it into **Jenkins as a hard gate**
+* Provide **auto-scaling remediation playbooks**
+* Create a **capacity simulation checklist**
+
+Tell me the next step you want to cover.
+
+
 ---
 
 ## 5. Backup Strategy (CRITICAL)
