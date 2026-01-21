@@ -311,22 +311,365 @@ Just tell me how you want to proceed.
 
 ### 4.2 API Deprecation & Removal Audit
 
-Run **before every upgrade**:
+Below is a **production-grade, step-by-step runbook section** for **4.2 – API Deprecation & Removal Audit**, written so it can be **directly added to your upgrade run book** and **executed by SREs without ambiguity**.
+
+This section explains **what to run, why to run it, how to interpret results, and when to BLOCK the upgrade**.
+
+---
+
+# 4.2 API Deprecation & Removal Audit (MANDATORY)
+
+## Objective
+
+Identify **deprecated or removed Kubernetes APIs** that will **break workloads after a Kubernetes upgrade**.
+
+**Why this is critical**
+
+* Kubernetes **removes APIs permanently** in newer versions
+* Objects using removed APIs:
+
+  * Fail to create
+  * Fail to reconcile
+  * Can crash controllers
+* CRDs are especially dangerous because failures are often silent
+
+**Rule (Non-Negotiable)**
+
+> **If deprecated or removed APIs are in use, the upgrade MUST be blocked.**
+
+---
+
+## When This Step Must Be Run
+
+* **Before every Kubernetes minor version upgrade**
+* **After add-on upgrades**
+* **Before CAB / change approval**
+* **Before production rollout**
+
+---
+
+## Inputs Required
+
+* Access to the cluster via `kubectl`
+* Target Kubernetes version (example: `1.34`)
+* Read access to all namespaces
+
+---
+
+## Step 1: Establish Current and Target Kubernetes Versions
+
+```bash
+kubectl version -o json | jq -r '.serverVersion.gitVersion'
+```
+
+Example:
+
+```
+v1.33.4
+```
+
+Target:
+
+```
+1.34
+```
+
+---
+
+## Step 2: Baseline API Resource Inventory
+
+### Command
 
 ```bash
 kubectl api-resources
-kubectl get --raw /metrics | grep deprecated
 ```
 
-Recommended tools:
+### Purpose
 
-* `kubent`
-* `pluto`
+* Lists **all API resources currently registered** in the cluster
+* Includes:
 
-**Block upgrade if:**
+  * Core APIs
+  * CRDs
+  * Aggregated APIs
 
-* Deprecated APIs are still in use
-* CRDs target removed API versions
+### What to Look For
+
+* Older API groups such as:
+
+  * `extensions/v1beta1`
+  * `apps/v1beta1`
+  * `apps/v1beta2`
+  * `networking.k8s.io/v1beta1`
+  * `apiextensions.k8s.io/v1beta1`
+
+### Decision
+
+| Result                         | Action            |
+| ------------------------------ | ----------------- |
+| Only stable APIs (`v1`)        | Continue          |
+| Beta / deprecated APIs present | Proceed to Step 3 |
+| Removed APIs present           | **BLOCK UPGRADE** |
+
+---
+
+## Step 3: Detect Deprecated API Usage via Metrics
+
+### Command
+
+```bash
+kubectl get --raw /metrics | grep -i deprecated
+```
+
+### What This Does
+
+* Queries the API server metrics endpoint
+* Detects **live usage of deprecated APIs**
+* Captures:
+
+  * Which API
+  * Which client
+  * Frequency of use
+
+### Example Output
+
+```
+apiserver_requested_deprecated_apis{group="apps",version="v1beta1",resource="deployments"} 12
+```
+
+### Interpretation
+
+| Observation      | Meaning                                  |
+| ---------------- | ---------------------------------------- |
+| Metric present   | Deprecated API actively used             |
+| Metric count > 0 | Workloads/controllers still depend on it |
+| No output        | No deprecated API usage detected         |
+
+### Decision
+
+* **Any output = FAIL**
+* **Upgrade must be blocked until remediated**
+
+---
+
+## Step 4: Detect Deprecated APIs in Live Objects (kubectl-native)
+
+### Command
+
+```bash
+kubectl get all -A -o yaml | grep -E "apiVersion:.*v1beta|extensions"
+```
+
+### Purpose
+
+* Finds workloads using deprecated API versions
+* Covers:
+
+  * Deployments
+  * DaemonSets
+  * StatefulSets
+  * Ingress
+  * Network policies
+
+### Decision
+
+| Result        | Action          |
+| ------------- | --------------- |
+| No matches    | Continue        |
+| Matches found | Upgrade blocked |
+
+---
+
+## Step 5: Run `kubent` (Kubernetes No-Trouble)
+
+### Tool Purpose
+
+`kubent` scans the **entire cluster** and reports:
+
+* Deprecated APIs
+* Removed APIs
+* Version in which APIs will be removed
+
+### Installation
+
+```bash
+curl -sSL https://github.com/doitintl/kube-no-trouble/releases/latest/download/kubent-linux-amd64 \
+  -o kubent
+chmod +x kubent
+sudo mv kubent /usr/local/bin/
+```
+
+### Execution
+
+```bash
+kubent
+```
+
+### Example Output
+
+```
+Found deprecated API:
+- apps/v1beta1 Deployment (removed in 1.16)
+- networking.k8s.io/v1beta1 Ingress (removed in 1.22)
+```
+
+### Decision
+
+| kubent Output         | Action            |
+| --------------------- | ----------------- |
+| No deprecated APIs    | PASS              |
+| Deprecated APIs found | **BLOCK UPGRADE** |
+
+---
+
+## Step 6: Run `pluto` (CRD-Focused Audit)
+
+### Tool Purpose
+
+`pluto` is **mandatory** if your cluster uses:
+
+* Operators
+* CRDs
+* Service meshes
+* Custom controllers
+
+It detects:
+
+* Deprecated APIs
+* Removed APIs
+* CRDs using invalid versions
+
+### Installation
+
+```bash
+curl -sSL https://github.com/FairwindsOps/pluto/releases/latest/download/pluto_linux_amd64.tar.gz | tar xz
+sudo mv pluto /usr/local/bin/
+```
+
+### Cluster-wide Scan
+
+```bash
+pluto detect-all-in-cluster
+```
+
+### Target-version Scan (Recommended)
+
+```bash
+pluto detect-all-in-cluster --target-versions k8s=v1.34
+```
+
+### Example Output
+
+```
+CRD myresource.example.com uses apiextensions.k8s.io/v1beta1
+REMOVED IN v1.22
+```
+
+### Decision
+
+| Pluto Result    | Action              |
+| --------------- | ------------------- |
+| No findings     | PASS                |
+| Deprecated CRDs | Upgrade blocked     |
+| Removed CRDs    | **IMMEDIATE BLOCK** |
+
+---
+
+## Step 7: CRD Version Audit (Manual Safety Net)
+
+### Command
+
+```bash
+kubectl get crds -o json | jq -r '.items[].spec.versions[].name'
+```
+
+Verify:
+
+* CRDs use `apiextensions.k8s.io/v1`
+* No `v1beta1` definitions exist
+
+---
+
+## Step 8: Go / No-Go Criteria
+
+### ✅ GO (Proceed to Next Step)
+
+All conditions must be true:
+
+* No deprecated APIs in `/metrics`
+* `kubent` shows no deprecated APIs
+* `pluto` shows no deprecated or removed APIs
+* All CRDs use supported API versions
+
+---
+
+### ❌ NO-GO (Upgrade Blocked)
+
+Upgrade must be **stopped immediately** if **ANY** of the following are true:
+
+* Deprecated APIs detected
+* Removed APIs detected
+* CRDs target unsupported API versions
+* Operators depend on removed APIs
+
+---
+
+## Step 9: Required Remediation Before Proceeding
+
+If NO-GO:
+
+1. Update manifests to supported API versions
+2. Upgrade operators/controllers
+3. Reapply CRDs
+4. Re-run **ALL checks**
+5. Proceed only after **zero findings**
+
+---
+
+## Step 10: Evidence to Capture (Audit Requirement)
+
+Save outputs:
+
+```bash
+kubectl api-resources > api-resources.txt
+kubectl get --raw /metrics | grep deprecated > deprecated-metrics.txt
+kubent > kubent-report.txt
+pluto detect-all-in-cluster --target-versions k8s=v1.34 > pluto-report.txt
+```
+
+Attach these files to:
+
+* CAB ticket
+* Upgrade record
+* CI/CD artifacts
+
+---
+
+## Summary (Executive Level)
+
+* APIs are **removed permanently** in Kubernetes
+* Deprecated APIs **will break silently**
+* This audit is **mandatory**
+* **No clean report = No upgrade**
+
+---
+
+### Next Runbook Step
+
+Proceed to **4.3 – PodDisruptionBudget & Workload Readiness Validation** only if:
+
+```
+ALL API AUDITS = PASS
+```
+
+If you want, next I can:
+
+* Add this as an **automated Jenkins gate**
+* Integrate API checks into your existing script
+* Provide **real-world remediation examples**
+* Map deprecated APIs specifically for **1.33 → 1.34**
+
+Just tell me how you want to proceed.
 
 ---
 
