@@ -1,0 +1,67 @@
+pipeline {
+  agent any
+
+  parameters {
+    string(name: 'CLUSTER_NAME', defaultValue: 'prod-eks')
+    string(name: 'NODEGROUP_NAME', defaultValue: 'prod-ng')
+    string(name: 'TARGET_VERSION', defaultValue: '1.34')
+    string(name: 'AWS_REGION', defaultValue: 'us-east-1')
+  }
+
+  environment {
+    AWS_DEFAULT_REGION = "${params.AWS_REGION}"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Pre-Upgrade Validation') {
+      steps {
+        sh '''
+          echo "Checking cluster access"
+          kubectl get nodes
+          echo "Checking PodDisruptionBudgets"
+          kubectl get pdb -A
+        '''
+      }
+    }
+
+    stage('Manual Approval') {
+      steps {
+        input message: """
+Approve managed node group upgrade?
+
+Cluster   : ${params.CLUSTER_NAME}
+NodeGroup : ${params.NODEGROUP_NAME}
+Version   : ${params.TARGET_VERSION}
+"""
+      }
+    }
+
+    stage('Upgrade Managed Node Group') {
+      steps {
+        sh """
+          ./eks-managed-nodegroup-upgrade.sh \
+            ${params.CLUSTER_NAME} \
+            ${params.NODEGROUP_NAME} \
+            ${params.TARGET_VERSION} \
+            ${params.AWS_REGION}
+        """
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "Managed node group upgrade completed successfully"
+    }
+    failure {
+      echo "Upgrade failed – investigate AWS EKS and Kubernetes events immediately"
+    }
+  }
+}
