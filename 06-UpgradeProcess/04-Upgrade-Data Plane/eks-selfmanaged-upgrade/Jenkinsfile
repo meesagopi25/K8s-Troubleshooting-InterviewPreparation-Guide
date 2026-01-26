@@ -1,1 +1,92 @@
-steps
+pipeline {
+  agent any
+
+  parameters {
+    string(name: 'CLUSTER_NAME', defaultValue: 'prod-eks')
+    string(name: 'AWS_REGION', defaultValue: 'us-east-1')
+    string(name: 'WORKER_AMI_ID', description: 'New EKS worker AMI')
+    booleanParam(name: 'APPLY', defaultValue: false)
+  }
+
+  environment {
+    AWS_DEFAULT_REGION = "${params.AWS_REGION}"
+    TF_VAR_cluster_name = "${params.CLUSTER_NAME}"
+    TF_VAR_worker_ami_id = "${params.WORKER_AMI_ID}"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Prechecks') {
+      steps {
+        sh '''
+          kubectl get nodes
+          kubectl get pdb -A
+        '''
+      }
+    }
+
+    stage('Terraform Init') {
+      steps {
+        sh 'cd terraform && terraform init'
+      }
+    }
+
+    stage('Terraform Plan – New ASG') {
+      steps {
+        sh 'cd terraform && terraform plan -out=tfplan'
+      }
+    }
+
+    stage('Manual Approval') {
+      when { expression { params.APPLY == true } }
+      steps {
+        input message: """
+Approve Self-Managed Worker Upgrade?
+
+This will:
+1. Create NEW ASG
+2. Join new nodes
+3. Drain OLD nodes
+"""
+      }
+    }
+
+    stage('Terraform Apply – Create New ASG') {
+      when { expression { params.APPLY == true } }
+      steps {
+        sh 'cd terraform && terraform apply tfplan'
+      }
+    }
+
+    stage('Drain Old Nodes') {
+      when { expression { params.APPLY == true } }
+      steps {
+        sh './scripts/drain-old-nodes.sh'
+      }
+    }
+
+    stage('Post-Validation') {
+      steps {
+        sh '''
+          kubectl get nodes
+          kubectl get pods -A | grep -v Running || true
+        '''
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "Self-managed worker upgrade completed successfully"
+    }
+    failure {
+      echo "Upgrade failed – old ASG remains intact for rollback"
+    }
+  }
+}
