@@ -1,0 +1,70 @@
+pipeline {
+  agent any
+
+  parameters {
+    string(name: 'CLUSTER_NAME', defaultValue: 'prod-eks')
+    string(name: 'OLD_NODE_LABEL', defaultValue: 'nodegroup=workers-v1')
+    string(name: 'NEW_NODE_LABEL', defaultValue: 'nodegroup=workers-v2')
+    string(name: 'AWS_REGION', defaultValue: 'us-east-1')
+  }
+
+  environment {
+    AWS_DEFAULT_REGION = "${params.AWS_REGION}"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Pre-Upgrade Validation') {
+      steps {
+        sh '''
+          echo "Validating cluster access"
+          kubectl get nodes
+
+          echo "Validating PodDisruptionBudgets"
+          kubectl get pdb -A
+        '''
+      }
+    }
+
+    stage('Manual Approval') {
+      steps {
+        input message: """
+Approve SELF-MANAGED node upgrade?
+
+Cluster       : ${params.CLUSTER_NAME}
+Old Nodes     : ${params.OLD_NODE_LABEL}
+New Nodes     : ${params.NEW_NODE_LABEL}
+
+This will cordon and drain old worker nodes sequentially.
+"""
+      }
+    }
+
+    stage('Drain Old Nodes') {
+      steps {
+        sh """
+          ./eks-selfmanaged-node-upgrade.sh \
+            '${params.OLD_NODE_LABEL}' \
+            '${params.NEW_NODE_LABEL}' \
+            '${params.CLUSTER_NAME}' \
+            '${params.AWS_REGION}'
+        """
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "Self-managed worker node upgrade completed successfully"
+    }
+    failure {
+      echo "Upgrade failed – old ASG remains intact for rollback"
+    }
+  }
+}
