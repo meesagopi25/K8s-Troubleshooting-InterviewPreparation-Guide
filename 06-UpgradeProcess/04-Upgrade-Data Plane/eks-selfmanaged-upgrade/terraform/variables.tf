@@ -1,3 +1,7 @@
+variable "kubernetes_version" {
+  description = "Target Kubernetes version for worker nodes (e.g. 1.34)"
+  type        = string
+}
 
 variable "aws_region" {
   description = "AWS region where EKS cluster exists"
