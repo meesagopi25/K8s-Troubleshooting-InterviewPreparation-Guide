@@ -1,17 +1,38 @@
 pipeline {
   agent any
 
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
   parameters {
-    string(name: 'CLUSTER_NAME', defaultValue: 'prod-eks')
-    string(name: 'AWS_REGION', defaultValue: 'us-east-1')
-    string(name: 'WORKER_AMI_ID', description: 'New EKS worker AMI')
-    booleanParam(name: 'APPLY', defaultValue: false)
+    string(
+      name: 'CLUSTER_NAME',
+      defaultValue: 'prod-eks',
+      description: 'EKS cluster name'
+    )
+    string(
+      name: 'AWS_REGION',
+      defaultValue: 'us-east-1',
+      description: 'AWS region'
+    )
+    string(
+      name: 'K8S_VERSION',
+      defaultValue: '1.34',
+      description: 'Target Kubernetes version for worker nodes'
+    )
+    booleanParam(
+      name: 'APPLY',
+      defaultValue: false,
+      description: 'Approve creation of new ASG and draining of old nodes'
+    )
   }
 
   environment {
-    AWS_DEFAULT_REGION = "${params.AWS_REGION}"
-    TF_VAR_cluster_name = "${params.CLUSTER_NAME}"
-    TF_VAR_worker_ami_id = "${params.WORKER_AMI_ID}"
+    AWS_DEFAULT_REGION        = "${params.AWS_REGION}"
+    TF_VAR_cluster_name       = "${params.CLUSTER_NAME}"
+    TF_VAR_kubernetes_version = "${params.K8S_VERSION}"
   }
 
   stages {
@@ -22,59 +43,113 @@ pipeline {
       }
     }
 
-    stage('Prechecks') {
+    stage('Preflight Checks') {
       steps {
         sh '''
+          echo "=== Cluster Nodes ==="
           kubectl get nodes
-          kubectl get pdb -A
+
+          echo "=== PodDisruptionBudgets ==="
+          kubectl get pdb -A || true
         '''
       }
     }
 
     stage('Terraform Init') {
       steps {
-        sh 'cd terraform && terraform init'
+        sh '''
+          cd terraform
+          terraform init -reconfigure
+        '''
       }
     }
 
-    stage('Terraform Plan – New ASG') {
+    stage('Terraform Validate') {
       steps {
-        sh 'cd terraform && terraform plan -out=tfplan'
+        sh '''
+          cd terraform
+          terraform validate
+        '''
+      }
+    }
+
+    stage('Terraform Plan – New Launch Template & ASG') {
+      steps {
+        sh '''
+          cd terraform
+          terraform plan -out=tfplan
+        '''
       }
     }
 
     stage('Manual Approval') {
-      when { expression { params.APPLY == true } }
+      when {
+        expression { params.APPLY == true }
+      }
       steps {
         input message: """
-Approve Self-Managed Worker Upgrade?
+APPROVAL REQUIRED
 
-This will:
-1. Create NEW ASG
-2. Join new nodes
-3. Drain OLD nodes
+This action will:
+1. Automatically look up the EKS-optimized AMI for Kubernetes ${params.K8S_VERSION}
+2. Create a NEW Launch Template
+3. Create a NEW Auto Scaling Group
+4. Join new worker nodes to the cluster
+5. Drain OLD worker nodes (one by one)
+
+Rollback is possible because the old ASG remains intact.
 """
       }
     }
 
     stage('Terraform Apply – Create New ASG') {
-      when { expression { params.APPLY == true } }
-      steps {
-        sh 'cd terraform && terraform apply tfplan'
+      when {
+        expression { params.APPLY == true }
       }
-    }
-
-    stage('Drain Old Nodes') {
-      when { expression { params.APPLY == true } }
-      steps {
-        sh './scripts/drain-old-nodes.sh'
-      }
-    }
-
-    stage('Post-Validation') {
       steps {
         sh '''
-          kubectl get nodes
+          cd terraform
+          terraform apply tfplan
+        '''
+      }
+    }
+
+    stage('Wait for New Nodes to Join') {
+      when {
+        expression { params.APPLY == true }
+      }
+      steps {
+        sh '''
+          echo "Waiting for new worker nodes (nodegroup=workers-v2) to become Ready..."
+
+          until kubectl get nodes -l nodegroup=workers-v2 | grep -q Ready; do
+            sleep 20
+          done
+
+          echo "New worker nodes are Ready"
+        '''
+      }
+    }
+
+    stage('Drain Old Worker Nodes') {
+      when {
+        expression { params.APPLY == true }
+      }
+      steps {
+        sh '''
+          chmod +x scripts/drain-old-nodes.sh
+          ./scripts/drain-old-nodes.sh
+        '''
+      }
+    }
+
+    stage('Post-Upgrade Validation') {
+      steps {
+        sh '''
+          echo "=== Nodes ==="
+          kubectl get nodes -o wide
+
+          echo "=== Non-Running Pods (if any) ==="
           kubectl get pods -A | grep -v Running || true
         '''
       }
@@ -83,10 +158,10 @@ This will:
 
   post {
     success {
-      echo "Self-managed worker upgrade completed successfully"
+      echo "✅ Self-managed EKS worker upgrade completed successfully"
     }
     failure {
-      echo "Upgrade failed – old ASG remains intact for rollback"
+      echo "❌ Upgrade failed – old ASG remains untouched for rollback"
     }
   }
 }
