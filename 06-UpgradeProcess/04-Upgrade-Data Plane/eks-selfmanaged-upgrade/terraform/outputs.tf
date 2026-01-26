@@ -1,3 +1,12 @@
+output "worker_ami_id" {
+  description = "EKS optimized AMI ID selected for worker nodes"
+  value       = data.aws_ssm_parameter.eks_worker_ami.value
+}
+
+output "kubernetes_version" {
+  description = "Target Kubernetes version for worker nodes"
+  value       = var.kubernetes_version
+}
 
 output "new_asg_name" {
   description = "Name of the newly created Auto Scaling Group"
